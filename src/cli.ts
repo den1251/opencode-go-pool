@@ -3,6 +3,7 @@ import { spawn } from "node:child_process"
 import { access, readFile, unlink, writeFile } from "node:fs/promises"
 import { delimiter, join } from "node:path"
 import { createInterface } from "node:readline/promises"
+import { fileURLToPath } from "node:url"
 import type { AccountState, ClearFilter, DashboardInfo, Status, UsageEntry } from "./types"
 import { clearUsage, readUsageEntries } from "./clear"
 import { configDirectory, dataDirectory, paths } from "./config"
@@ -237,14 +238,30 @@ async function installPackage() {
 
 async function uninstall() {
   const binary = await findExecutable("opencode")
+  const root = packageRoot().replace(/[\\/]+$/, "")
   if (binary) {
-    const code = await runOpencode(binary, ["plugin", "remove", "opencode-go-pool"])
-    if (code !== 0) console.warn("No npm plugin entry was removed from the OpenCode config.")
+    for (const target of ["opencode-go-pool", root]) {
+      await runOpencode(binary, ["plugin", "remove", target], true)
+    }
   }
   await unlink(join(configDirectory(), "plugin", "opencode-go-pool")).catch(() => {})
+  if (await pluginEntryRemains(root)) {
+    console.error("The plugin entry is still present in the OpenCode config.")
+    console.error(`Remove ${root} or opencode-go-pool from ${join(configDirectory(), "opencode.jsonc")} manually.`)
+    process.exitCode = 1
+    return
+  }
   console.log("Plugin entry removed. Restart OpenCode to unload it.")
   console.log(`Local usage data is kept at: ${directory}`)
   console.log("Delete that directory manually if you also want to remove the history.")
+}
+
+async function pluginEntryRemains(root: string) {
+  for (const name of ["opencode.jsonc", "opencode.json"]) {
+    const text = await readFile(join(configDirectory(), name), "utf8").catch(() => "")
+    if (text.includes(root) || text.includes("opencode-go-pool")) return true
+  }
+  return false
 }
 
 async function showInstallationStatus() {
@@ -254,9 +271,13 @@ async function showInstallationStatus() {
   console.log(`Data directory: ${directory}`)
 }
 
-async function runOpencode(binary: string, args: string[]) {
-  const child = spawn(binary, args, { stdio: "inherit" })
+async function runOpencode(binary: string, args: string[], quiet = false) {
+  const child = spawn(binary, args, { stdio: quiet ? "ignore" : "inherit" })
   return new Promise<number>((resolve) => child.on("exit", (value) => resolve(value ?? 1)))
+}
+
+function packageRoot() {
+  return fileURLToPath(new URL("..", import.meta.url))
 }
 
 async function printURL() {

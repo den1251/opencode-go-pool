@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { access, readFile as readFile3, unlink as unlink3, writeFile as writeFile2 } from "node:fs/promises";
 import { delimiter, join as join5 } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 
 // src/clear.ts
 import { readdir, readFile, unlink } from "node:fs/promises";
@@ -503,15 +504,30 @@ async function installPackage() {
 }
 async function uninstall() {
   const binary = await findExecutable("opencode");
+  const root = packageRoot().replace(/[\\/]+$/, "");
   if (binary) {
-    const code = await runOpencode(binary, ["plugin", "remove", "opencode-go-pool"]);
-    if (code !== 0)
-      console.warn("No npm plugin entry was removed from the OpenCode config.");
+    for (const target of ["opencode-go-pool", root]) {
+      await runOpencode(binary, ["plugin", "remove", target], true);
+    }
   }
   await unlink3(join5(configDirectory(), "plugin", "opencode-go-pool")).catch(() => {});
+  if (await pluginEntryRemains(root)) {
+    console.error("The plugin entry is still present in the OpenCode config.");
+    console.error(`Remove ${root} or opencode-go-pool from ${join5(configDirectory(), "opencode.jsonc")} manually.`);
+    process.exitCode = 1;
+    return;
+  }
   console.log("Plugin entry removed. Restart OpenCode to unload it.");
   console.log(`Local usage data is kept at: ${directory}`);
   console.log("Delete that directory manually if you also want to remove the history.");
+}
+async function pluginEntryRemains(root) {
+  for (const name of ["opencode.jsonc", "opencode.json"]) {
+    const text = await readFile3(join5(configDirectory(), name), "utf8").catch(() => "");
+    if (text.includes(root) || text.includes("opencode-go-pool"))
+      return true;
+  }
+  return false;
 }
 async function showInstallationStatus() {
   const binary = await findExecutable("opencode");
@@ -521,9 +537,12 @@ async function showInstallationStatus() {
     console.log("The opencode binary was not found on PATH.");
   console.log(`Data directory: ${directory}`);
 }
-async function runOpencode(binary, args) {
-  const child = spawn(binary, args, { stdio: "inherit" });
+async function runOpencode(binary, args, quiet = false) {
+  const child = spawn(binary, args, { stdio: quiet ? "ignore" : "inherit" });
   return new Promise((resolve) => child.on("exit", (value) => resolve(value ?? 1)));
+}
+function packageRoot() {
+  return fileURLToPath(new URL("..", import.meta.url));
 }
 async function printURL() {
   const info = await readJson(files.dashboard);
