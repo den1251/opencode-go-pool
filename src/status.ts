@@ -7,6 +7,7 @@ import type {
   QuotaCache,
   Status,
   SwitchEntry,
+  Tokens,
 } from "./types"
 import { accountUsable } from "./selection"
 import { readJson, writeJsonAtomic } from "./fs-utils"
@@ -144,12 +145,17 @@ export function formatStatusTable(status: Status): string {
     )
   })
   lines.push("")
-  lines.push(
-    `This machine today: ${money(status.today.cost)} list · ${planText(status.today.allowance)} · ${tokensText(status.today.tokens)} · ${status.today.entries} request(s)`,
-  )
-  lines.push(
-    `This machine month: ${money(status.month.cost)} list · ${planText(status.month.allowance)} · ${tokensText(status.month.tokens)} · ${status.month.entries} request(s)`,
-  )
+  const totals = `This machine: ${money(status.month.cost)} list · ${planText(status.month.allowance)} · ${tokensText(status.month.tokens)} · ${status.month.entries} request(s)`
+  if (sameTotals(status.today, status.month)) {
+    lines.push(totals)
+  } else {
+    lines.push(
+      `Today: ${money(status.today.cost)} list · ${planText(status.today.allowance)} · ${tokensText(status.today.tokens)} · ${status.today.entries} request(s)`,
+    )
+    lines.push(
+      `This month: ${money(status.month.cost)} list · ${planText(status.month.allowance)} · ${tokensText(status.month.tokens)} · ${status.month.entries} request(s)`,
+    )
+  }
   if (status.month.estimated > 0) {
     lines.push(`Cost includes catalog estimates for ${status.month.estimated} request(s) without an exact list cost.`)
   }
@@ -159,6 +165,19 @@ export function formatStatusTable(status: Status): string {
   const last = status.switches[0]
   if (last) lines.push(`Last switch: ${last.from ?? "none"} → ${last.to} (${last.reason})`)
   return lines.join("\n")
+}
+
+function sameTotals(left: { entries: number; cost: number; allowance: number; tokens: Tokens }, right: { entries: number; cost: number; allowance: number; tokens: Tokens }) {
+  return (
+    left.entries === right.entries &&
+    left.cost === right.cost &&
+    left.allowance === right.allowance &&
+    left.tokens.input === right.tokens.input &&
+    left.tokens.output === right.tokens.output &&
+    left.tokens.reasoning === right.tokens.reasoning &&
+    left.tokens.cacheRead === right.tokens.cacheRead &&
+    left.tokens.cacheWrite === right.tokens.cacheWrite
+  )
 }
 
 function quotaCell(value: { percent: number; limited: boolean; resetsAt: number | null } | undefined) {

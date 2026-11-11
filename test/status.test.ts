@@ -108,9 +108,30 @@ describe("status", () => {
     expect(text).toContain("OpenCode Go Pool")
     expect(text).toContain("Account A")
     expect(text).toContain("10.0%")
-    expect(text).toContain("This machine today")
+    expect(text).toContain("Today:")
+    expect(text).toContain("This month:")
     expect(text).toContain("$0.4000 plan")
     expect(text).toContain("Dashboard:")
+  })
+
+  test("does not repeat identical today and month totals", () => {
+    const status = buildStatus({
+      dataDir: "/data",
+      owner: "alice",
+      machineID: "mch_test",
+      accounts,
+      state,
+      quotas,
+      cooldowns,
+      today: month,
+      month,
+      switches: [],
+      threshold: 100,
+    })
+    const text = formatStatusTable(status)
+    expect(text).toContain("This machine:")
+    expect(text).not.toContain("This month:")
+    expect(text).not.toContain("Today:")
   })
 
   test("small formatting helpers", () => {
