@@ -1,0 +1,52 @@
+{
+  "name": "opencode-go-pool",
+  "version": "0.1.0",
+  "description": "Multi-account pool, quota monitor and local usage ledger for OpenCode Go",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/den1251/opencode-go-pool.git"
+  },
+  "bugs": {
+    "url": "https://github.com/den1251/opencode-go-pool/issues"
+  },
+  "homepage": "https://github.com/den1251/opencode-go-pool#readme",
+  "keywords": [
+    "opencode",
+    "opencode-go",
+    "plugin",
+    "quota",
+    "multi-account",
+    "usage"
+  ],
+  "exports": {
+    ".": "./dist/server.js",
+    "./server": "./dist/server.js"
+  },
+  "main": "./dist/server.js",
+  "bin": {
+    "opencode-go-pool": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "bun build src/server.ts --outdir dist --target node --format esm && bun build src/cli.ts --outdir dist --target node --format esm && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "prepack": "bun run build"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "latest"
+  }
+}

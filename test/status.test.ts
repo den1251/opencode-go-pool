@@ -1,0 +1,162 @@
+import { describe, expect, test } from "bun:test"
+import { buildStatus, compact, formatStatusMarkdown, formatStatusTable, money, percent, tokensText } from "../src/status"
+import type { AccountState, Aggregate, CooldownCache, QuotaCache } from "../src/types"
+import { account, accountUsage, aggregate, modelUsage, tokens } from "./helpers"
+
+const state: AccountState = { version: 1, order: ["a", "b"], disabled: [], activeID: "a", updatedAt: 0 }
+const accounts = [account({ id: "a", label: "Account A" }), account({ id: "b", label: "Account B", token: "x" })]
+const quotas: QuotaCache = {
+  version: 1,
+  accounts: {
+    a: {
+      fetchedAt: Date.now(),
+      rolling: { percent: 10, limited: false, status: "ok", resetsAt: Date.now() + 60_000 },
+      weekly: { percent: 20, limited: false, status: "ok", resetsAt: Date.now() + 120_000 },
+      monthly: { percent: 30, limited: false, status: "ok", resetsAt: Date.now() + 240_000 },
+    },
+  },
+}
+const cooldowns: CooldownCache = { version: 1, accounts: {} }
+const empty: Aggregate = aggregate()
+const month: Aggregate = aggregate({
+  entries: 3,
+  cost: 1.5,
+  listCost: 1.4,
+  allowance: 0.4,
+  charged: 0,
+  tokens: tokens({ input: 1000, output: 200 }),
+  models: [
+    modelUsage({
+      requests: 3,
+      cost: 1.5,
+      listCost: 1.4,
+      allowance: 0.4,
+      ...tokens({ input: 1000, output: 200 }),
+    }),
+  ],
+  accounts: { a: accountUsage({ requests: 2, cost: 1, listCost: 0.9, allowance: 0.3, tokens: tokens({ input: 800, output: 100 }) }) },
+  owners: {
+    alice: accountUsage({ requests: 3, cost: 1.5, listCost: 1.4, allowance: 0.4, tokens: tokens({ input: 1000, output: 200 }) }),
+    bob: accountUsage({ requests: 1, cost: 0.2, listCost: 0.1, allowance: 0.05, tokens: tokens({ input: 10 }) }),
+  },
+})
+
+describe("status", () => {
+  test("builds account status with quota and spend", () => {
+    const status = buildStatus({
+      dataDir: "/data",
+      owner: "alice",
+      machineID: "mch_test",
+      accounts,
+      state,
+      quotas,
+      cooldowns,
+      today: empty,
+      month,
+      switches: [{ ts: 1, from: "B", to: "A", reason: "quota" }],
+      threshold: 100,
+    })
+    expect(status.owner).toBe("alice")
+    expect(status.activeID).toBe("a")
+    expect(status.accounts[0]?.active).toBe(true)
+    expect(status.accounts[0]?.usable).toBe(true)
+    expect(status.accounts[1]?.quota).toBeNull()
+    expect(status.month.owners.bob?.cost).toBe(0.2)
+    expect(status.switches[0]?.to).toBe("A")
+  })
+
+  test("marks an exhausted account unusable", () => {
+    const status = buildStatus({
+      dataDir: "/data",
+      owner: "alice",
+      machineID: "mch_test",
+      accounts,
+      state,
+      quotas: {
+        version: 1,
+        accounts: {
+          a: { fetchedAt: Date.now(), error: "oops" },
+          b: { fetchedAt: Date.now(), rolling: { percent: 100, limited: true, status: "rate-limited", resetsAt: null } },
+        },
+      },
+      cooldowns,
+      today: empty,
+      month: empty,
+      switches: [],
+      threshold: 100,
+    })
+    expect(status.accounts[0]?.usable).toBe(true)
+    expect(status.accounts[1]?.usable).toBe(false)
+  })
+
+  test("formats a table with owner and quotas", () => {
+    const status = buildStatus({
+      dataDir: "/data",
+      owner: "alice",
+      machineID: "mch_test",
+      accounts,
+      state,
+      quotas,
+      cooldowns,
+      today: empty,
+      month,
+      switches: [],
+      threshold: 100,
+      dashboard: { url: "http://127.0.0.1:1/?token=x", port: 1 },
+    })
+    const text = formatStatusTable(status)
+    expect(text).toContain("OpenCode Go Pool")
+    expect(text).toContain("Account A")
+    expect(text).toContain("10.0%")
+    expect(text).toContain("This machine today")
+    expect(text).toContain("$0.4000 plan")
+    expect(text).toContain("Dashboard:")
+  })
+
+  test("formats markdown with owner, models and switches", () => {
+    const limited: QuotaCache = {
+      version: 1,
+      accounts: {
+        a: {
+          ...quotas.accounts.a!,
+          monthly: { percent: 100, limited: true, status: "rate-limited", resetsAt: Date.now() + 240_000 },
+        },
+      },
+    }
+    const status = buildStatus({
+      dataDir: "/data",
+      owner: "alice",
+      machineID: "mch_test",
+      accounts,
+      state,
+      quotas: limited,
+      cooldowns,
+      today: empty,
+      month,
+      switches: [],
+      threshold: 100,
+      lastError: "all exhausted",
+    })
+    const text = formatStatusMarkdown(status)
+    expect(text).toContain("OpenCode Go pool")
+    expect(text).toContain("deepseek-v4")
+    expect(text).toContain("LIMIT")
+    expect(text).toContain("Plan $")
+    expect(text).not.toContain("Dashboard")
+  })
+
+  test("small formatting helpers", () => {
+    expect(percent(12.34)).toBe("12.3%")
+    expect(percent(undefined)).toBe("—")
+    expect(money(0.1234)).toBe("$0.1234")
+    expect(money(12.345)).toBe("$12.35")
+    expect(money(0.000009)).toBe("$0.000009")
+    expect(money(0.002599908)).toBe("$0.002600")
+    expect(money(0.0000001)).toBe("$0.0000001")
+    expect(money(0)).toBe("$0.00")
+    expect(compact(999)).toBe("999")
+    expect(compact(1000)).toBe("1.0k")
+    expect(compact(1_000_000)).toBe("1.0M")
+    expect(tokensText(tokens({ input: 1000, output: 200 }))).toContain("1.0k in")
+  })
+})
