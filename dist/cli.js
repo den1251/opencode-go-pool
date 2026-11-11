@@ -2,8 +2,8 @@
 
 // src/cli.ts
 import { spawn } from "node:child_process";
-import { access, readFile as readFile3, unlink as unlink3, writeFile as writeFile2 } from "node:fs/promises";
-import { delimiter, join as join4 } from "node:path";
+import { access, readFile as readFile4, unlink as unlink4, writeFile as writeFile3 } from "node:fs/promises";
+import { delimiter, join as join5 } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
@@ -166,6 +166,119 @@ async function withLock(directory, name, run, timeoutMs = 4000) {
   }
 }
 
+// src/ledger.ts
+import { mkdir as mkdir2, readdir as readdir2, readFile as readFile3, unlink as unlink3, writeFile as writeFile2 } from "node:fs/promises";
+import { join as join4 } from "node:path";
+var EMPTY_TOKENS = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
+function dayKey(ts) {
+  return new Date(ts).toISOString().slice(0, 10);
+}
+function monthKey(ts) {
+  return dayKey(ts).slice(0, 7);
+}
+async function aggregateUsage(directory, options = {}) {
+  const prefix = options.day ?? options.month ?? "";
+  const since = options.day ? Date.parse(`${options.day}T00:00:00.000Z`) : options.month ? Date.parse(`${options.month}-01T00:00:00.000Z`) : 0;
+  const aggregate = {
+    since,
+    entries: 0,
+    estimated: 0,
+    cost: 0,
+    listCost: 0,
+    allowance: 0,
+    charged: 0,
+    tokens: { ...EMPTY_TOKENS },
+    models: [],
+    accounts: {},
+    owners: {},
+    billing: {}
+  };
+  let names;
+  try {
+    names = await readdir2(directory);
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return aggregate;
+    throw error;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json") || !name.startsWith(prefix))
+      continue;
+    let entry;
+    try {
+      entry = JSON.parse(await readFile3(join4(directory, name), "utf8"));
+    } catch {
+      continue;
+    }
+    applyEntry(aggregate, entry);
+  }
+  return aggregate;
+}
+function add(aggregate, entry) {
+  const listCost = entry.listCost ?? 0;
+  const allowance = entry.allowance ?? 0;
+  const charged = entry.charged ?? 0;
+  aggregate.entries += 1;
+  if (entry.estimated)
+    aggregate.estimated += 1;
+  aggregate.cost += entry.cost;
+  aggregate.listCost += listCost;
+  aggregate.allowance += allowance;
+  aggregate.charged += charged;
+  addTokens(aggregate.tokens, entry.tokens);
+  if (entry.billingSource)
+    aggregate.billing[entry.billingSource] = (aggregate.billing[entry.billingSource] ?? 0) + 1;
+  const account = aggregate.accounts[entry.accountID] ?? emptyUsage();
+  account.requests += 1;
+  account.cost += entry.cost;
+  account.listCost += listCost;
+  account.allowance += allowance;
+  account.charged += charged;
+  addTokens(account.tokens, entry.tokens);
+  aggregate.accounts[entry.accountID] = account;
+  const owner = aggregate.owners[entry.owner] ?? emptyUsage();
+  owner.requests += 1;
+  owner.cost += entry.cost;
+  owner.listCost += listCost;
+  owner.allowance += allowance;
+  owner.charged += charged;
+  addTokens(owner.tokens, entry.tokens);
+  aggregate.owners[entry.owner] = owner;
+  const key = `${entry.providerID}/${entry.model}`;
+  const model = aggregate.models.find((item) => `${item.providerID}/${item.model}` === key);
+  if (model) {
+    model.requests += 1;
+    model.cost += entry.cost;
+    model.listCost += listCost;
+    model.allowance += allowance;
+    addTokens(model, entry.tokens);
+  } else {
+    aggregate.models.push({
+      providerID: entry.providerID,
+      model: entry.model,
+      requests: 1,
+      cost: entry.cost,
+      listCost,
+      allowance,
+      ...entry.tokens
+    });
+  }
+}
+function emptyUsage() {
+  return { requests: 0, cost: 0, listCost: 0, allowance: 0, charged: 0, tokens: { ...EMPTY_TOKENS } };
+}
+function applyEntry(aggregate, entry) {
+  add(aggregate, entry);
+  aggregate.models.sort((left, right) => right.cost - left.cost || right.requests - left.requests);
+}
+function addTokens(target, value) {
+  target.input += value.input;
+  target.output += value.output;
+  target.reasoning += value.reasoning;
+  target.cacheRead += value.cacheRead;
+  target.cacheWrite += value.cacheWrite;
+}
+
 // src/status.ts
 function money(value) {
   if (!Number.isFinite(value) || value <= 0)
@@ -275,7 +388,7 @@ async function main() {
       return use(args[0]);
     case "add":
     case "login":
-      return add();
+      return add2();
     case "refresh":
       return refresh();
     case "clear":
@@ -371,7 +484,7 @@ async function markStatusActive(accountID) {
     item.active = item.id === accountID;
   await writeJsonAtomic(files.status, status, 384);
 }
-async function add() {
+async function add2() {
   const binary = await findExecutable("opencode");
   if (!binary) {
     console.error("The opencode binary was not found on PATH.");
@@ -483,10 +596,10 @@ async function uninstall() {
       await runOpencode(binary, ["plugin", "remove", target], true);
     }
   }
-  await unlink3(join4(configDirectory(), "plugin", "opencode-go-pool")).catch(() => {});
+  await unlink4(join5(configDirectory(), "plugin", "opencode-go-pool")).catch(() => {});
   if (await pluginEntryRemains(root)) {
     console.error("The plugin entry is still present in the OpenCode config.");
-    console.error(`Remove ${root} or opencode-go-pool from ${join4(configDirectory(), "opencode.jsonc")} manually.`);
+    console.error(`Remove ${root} or opencode-go-pool from ${join5(configDirectory(), "opencode.jsonc")} manually.`);
     process.exitCode = 1;
     return;
   }
@@ -496,7 +609,7 @@ async function uninstall() {
 }
 async function pluginEntryRemains(root) {
   for (const name of ["opencode.jsonc", "opencode.json"]) {
-    const text = await readFile3(join4(configDirectory(), name), "utf8").catch(() => "");
+    const text = await readFile4(join5(configDirectory(), name), "utf8").catch(() => "");
     if (text.includes(root) || text.includes("opencode-go-pool"))
       return true;
   }
@@ -592,7 +705,30 @@ async function clear(args) {
   const result = await clearUsage(files.events, filter);
   await writeJsonAtomic(files.clearRequest, { at: Date.now() }, 384);
   console.log(`Cleared ${result.removed} local entry(ies).`);
-  console.log("OpenCode will rebuild its status on the next activity.");
+  const updated = await refreshStatusAfterClear();
+  if (updated)
+    console.log(formatStatusTable(updated));
+}
+async function refreshStatusAfterClear() {
+  const current = await readStatus();
+  if (!current)
+    return;
+  const now = Date.now();
+  const [today, month] = await Promise.all([
+    aggregateUsage(files.events, { day: dayKey(now) }),
+    aggregateUsage(files.events, { month: monthKey(now) })
+  ]);
+  current.generatedAt = now;
+  current.today = today;
+  current.month = month;
+  for (const account of current.accounts) {
+    const todayUsage = today.accounts[account.id] ?? emptyUsage();
+    const monthUsage = month.accounts[account.id] ?? emptyUsage();
+    account.today = { cost: todayUsage.cost, tokens: todayUsage.tokens, allowance: todayUsage.allowance };
+    account.month = { cost: monthUsage.cost, tokens: monthUsage.tokens, allowance: monthUsage.allowance };
+  }
+  await writeJsonAtomic(files.status, current, 384);
+  return current;
 }
 async function exportUsage(args) {
   const filter = {};
@@ -627,7 +763,7 @@ async function exportUsage(args) {
   const entries = await readUsageEntries(files.events, filter);
   const text = csv ? toCSV(entries) : JSON.stringify(entries, null, 2);
   if (out) {
-    await writeFile2(out, text + (csv ? `
+    await writeFile3(out, text + (csv ? `
 ` : ""), { mode: 384 });
     console.log(`Wrote ${entries.length} entr${entries.length === 1 ? "y" : "ies"} to ${out}`);
     return;
@@ -724,7 +860,7 @@ function csvCell(value) {
 }
 async function readStatus() {
   try {
-    return JSON.parse(await readFile3(files.status, "utf8"));
+    return JSON.parse(await readFile4(files.status, "utf8"));
   } catch {
     return;
   }
@@ -733,7 +869,7 @@ async function findExecutable(name) {
   const extensions = process.platform === "win32" ? [".exe", ".cmd", ".bat", ""] : [""];
   for (const directory of (process.env.PATH ?? "").split(delimiter)) {
     for (const extension of extensions) {
-      const candidate = join4(directory, name + extension);
+      const candidate = join5(directory, name + extension);
       try {
         await access(candidate);
         return candidate;

@@ -8,6 +8,7 @@ import type { AccountState, ClearFilter, DashboardInfo, Status, UsageEntry } fro
 import { clearUsage, readUsageEntries } from "./clear"
 import { configDirectory, dataDirectory, paths } from "./config"
 import { readJson, withLock, writeJsonAtomic } from "./fs-utils"
+import { aggregateUsage, dayKey, emptyUsage, monthKey } from "./ledger"
 import { formatStatusTable } from "./status"
 
 const directory = dataDirectory()
@@ -345,7 +346,29 @@ async function clear(args: string[]) {
   const result = await clearUsage(files.events, filter)
   await writeJsonAtomic(files.clearRequest, { at: Date.now() }, 0o600)
   console.log(`Cleared ${result.removed} local entry(ies).`)
-  console.log("OpenCode will rebuild its status on the next activity.")
+  const updated = await refreshStatusAfterClear()
+  if (updated) console.log(formatStatusTable(updated))
+}
+
+async function refreshStatusAfterClear() {
+  const current = await readStatus()
+  if (!current) return undefined
+  const now = Date.now()
+  const [today, month] = await Promise.all([
+    aggregateUsage(files.events, { day: dayKey(now) }),
+    aggregateUsage(files.events, { month: monthKey(now) }),
+  ])
+  current.generatedAt = now
+  current.today = today
+  current.month = month
+  for (const account of current.accounts) {
+    const todayUsage = today.accounts[account.id] ?? emptyUsage()
+    const monthUsage = month.accounts[account.id] ?? emptyUsage()
+    account.today = { cost: todayUsage.cost, tokens: todayUsage.tokens, allowance: todayUsage.allowance }
+    account.month = { cost: monthUsage.cost, tokens: monthUsage.tokens, allowance: monthUsage.allowance }
+  }
+  await writeJsonAtomic(files.status, current, 0o600)
+  return current
 }
 
 async function exportUsage(args: string[]) {

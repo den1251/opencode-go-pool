@@ -127,6 +127,8 @@ describe("cli", () => {
     const all = await run(dir, ["clear", "--all", "--yes"])
     expect(all.stdout).toContain("Cleared 1")
     expect(JSON.parse((await run(dir, ["export"])).stdout)).toEqual([])
+    const after = await run(dir, ["status"])
+    expect(after.stdout).toContain("0 request(s)")
   })
 
   test("requires confirmation without a TTY", async () => {
