@@ -161,50 +161,6 @@ export function formatStatusTable(status: Status): string {
   return lines.join("\n")
 }
 
-export function formatStatusMarkdown(status: Status): string {
-  const lines: string[] = []
-  lines.push(`### OpenCode Go pool`)
-  lines.push("")
-  lines.push("| | Account | Key | 5h | Week | Month | Today | Month $ | Plan $ |")
-  lines.push("|---|---|---|---|---|---|---|---|---|")
-  for (const account of status.accounts) {
-    const mark = account.active ? "**active**" : account.usable ? "ready" : "blocked"
-    lines.push(
-      `| ${mark} | ${escape(account.label)} | \`${account.keyHint}\` | ${quotaCell(account.quota?.rolling)} | ${quotaCell(account.quota?.weekly)} | ${quotaCell(account.quota?.monthly)} | ${money(account.today.cost)} | ${money(account.month.cost)} | ${account.month.allowance > 0 ? money(account.month.allowance) : "—"} |`,
-    )
-  }
-  lines.push("")
-  lines.push(
-    `**This machine today:** ${money(status.today.cost)} list · ${planText(status.today.allowance)} · ${tokensText(status.today.tokens)} · ${status.today.entries} request(s)`,
-  )
-  lines.push(
-    `**This machine month:** ${money(status.month.cost)} list · ${planText(status.month.allowance)} · ${tokensText(status.month.tokens)} · ${status.month.entries} request(s)`,
-  )
-  if (status.month.models.length > 0) {
-    lines.push("")
-    lines.push("| Model | Requests | Tokens | List $ | Plan $ |")
-    lines.push("|---|---:|---:|---:|---:|")
-    for (const model of status.month.models.slice(0, 12)) {
-      lines.push(
-        `| ${escape(model.model)} | ${model.requests} | ${compact(model.input + model.output + model.reasoning)} | ${money(model.cost)} | ${model.allowance > 0 ? money(model.allowance) : "—"} |`,
-      )
-    }
-  }
-  if (status.month.estimated > 0) {
-    lines.push("")
-    lines.push(
-      `_Cost includes catalog estimates for ${status.month.estimated} request(s) without an exact list cost._`,
-    )
-  }
-  if (status.dashboard) {
-    lines.push("")
-    lines.push(`[Open dashboard](${status.dashboard.url})`)
-  }
-  lines.push("")
-  lines.push(`Machine: \`${status.machineID}\``)
-  return lines.join("\n")
-}
-
 function quotaCell(value: { percent: number; limited: boolean; resetsAt: number | null } | undefined) {
   if (!value) return "—"
   const reset = value.resetsAt ? ` (${resetText(value.resetsAt)})` : ""
@@ -221,8 +177,4 @@ function resetText(ts: number) {
 
 function truncate(value: string, length: number) {
   return value.length <= length ? value : value.slice(0, length - 1) + "…"
-}
-
-function escape(value: string) {
-  return value.replaceAll("|", "\\|")
 }

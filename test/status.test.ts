@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { buildStatus, compact, formatStatusMarkdown, formatStatusTable, money, percent, tokensText } from "../src/status"
+import { buildStatus, compact, formatStatusTable, money, percent, tokensText } from "../src/status"
 import type { AccountState, Aggregate, CooldownCache, QuotaCache } from "../src/types"
 import { account, accountUsage, aggregate, modelUsage, tokens } from "./helpers"
 
@@ -111,38 +111,6 @@ describe("status", () => {
     expect(text).toContain("This machine today")
     expect(text).toContain("$0.4000 plan")
     expect(text).toContain("Dashboard:")
-  })
-
-  test("formats markdown with owner, models and switches", () => {
-    const limited: QuotaCache = {
-      version: 1,
-      accounts: {
-        a: {
-          ...quotas.accounts.a!,
-          monthly: { percent: 100, limited: true, status: "rate-limited", resetsAt: Date.now() + 240_000 },
-        },
-      },
-    }
-    const status = buildStatus({
-      dataDir: "/data",
-      owner: "alice",
-      machineID: "mch_test",
-      accounts,
-      state,
-      quotas: limited,
-      cooldowns,
-      today: empty,
-      month,
-      switches: [],
-      threshold: 100,
-      lastError: "all exhausted",
-    })
-    const text = formatStatusMarkdown(status)
-    expect(text).toContain("OpenCode Go pool")
-    expect(text).toContain("deepseek-v4")
-    expect(text).toContain("LIMIT")
-    expect(text).toContain("Plan $")
-    expect(text).not.toContain("Dashboard")
   })
 
   test("small formatting helpers", () => {

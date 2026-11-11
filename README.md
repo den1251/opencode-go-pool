@@ -2,12 +2,12 @@
 
 Multi-account pool for **OpenCode Go** in OpenCode 2.x (CLI and Desktop).
 
-Repository: [github.com/den1251/opencode-go-pool](https://github.com/den1251/opencode-go-pool) · License: MIT
+License: MIT
 
 - Rotates between accounts in a persistent order: one account is used until its Go allowance is drained, then the next.
 - Reads the exact account-level usage percentage from OpenCode's own Go API: `GET https://opencode.ai/zen/go/v1/usage` (`rolling` / `weekly` / `monthly`, each with `status`, `percent`, `resetsAt`). This is an API call, not page scraping.
 - Tracks local tokens and cost per person, per account and per model, stored only on the machine where the plugin runs.
-- Shows the data as a terminal table, an in-session `/gopool` command, and a local dashboard.
+- Shows the data as a terminal table and an optional local dashboard.
 - Supports clearing and exporting local usage.
 
 ## What is exact
@@ -117,7 +117,7 @@ opencode-go-pool url             # dashboard URL
 opencode-go-pool open            # open the dashboard
 ```
 
-Inside OpenCode, run `/gopool` to post a status summary into the current session.
+Inside OpenCode, the plugin works without any command. Run the CLI in a terminal for status.
 
 The optional dashboard is a local HTTP page on `127.0.0.1` with a random token in the URL. It is off by default; enable it with `"dashboard": true` in the plugin options. It shows account quota bars, active account, per-model tokens, list cost and Go plan usage, and recent switches. It is read-only except for **Refresh quota** and **Clear all local usage**.
 
@@ -125,7 +125,7 @@ The optional dashboard is a local HTTP page on `127.0.0.1` with a random token i
 
 This is a per-PC ledger. There is no account splitting, user profile or upload. All usage files stay in the local data directory; the dashboard is opt-in and binds to `127.0.0.1` only.
 
-The old `owner` metadata field remains in exported records for backward compatibility, but it does not affect totals, grouping or clearing. `clear` without a filter clears all local usage on this PC.
+The ledger is stored only on this PC. It is not uploaded anywhere, and there is no per-person split or account-sharing calculation. `clear` without a filter clears all local usage on this PC.
 
 ## Clear local usage
 
@@ -167,7 +167,6 @@ accounts.json     persistent account order and active account
 quota.json        last quota response per account
 cooldown.json     429 cooldowns
 events/           one JSON file per usage event
-owner.json        owner label for this machine
 machine.json      stable machine ID included in exports
 dashboard.json    dashboard URL/token/pid
 plugin.log        plugin log
@@ -194,7 +193,6 @@ Each completed step writes one JSON file to `events/`, named `<UTC day>__<event 
   "id": "evt_...",
   "ts": 1794322562184,
   "day": "2026-11-10",
-  "owner": "alice",
   "machineID": "mch_...",
   "accountID": "cred_...",
   "accountLabel": "Personal",
@@ -260,7 +258,7 @@ input × inputPrice
 
 Prices are USD per million tokens from the `opencode-go` model catalog. The pricing tier is selected by the request context size (`input + cacheRead + cacheWrite`). The entry is marked `estimated: true` only when this fallback is used.
 
-Aggregation scans the event files for the requested UTC day or month prefix, then sums cost, list cost, allowance and all five token counters per account, model and owner. `status.json` is only a derived snapshot; the event files are the source of truth. Events older than 120 days are pruned at startup.
+Aggregation scans the event files for the requested UTC day or month prefix, then sums cost, list cost, allowance and all five token counters per account and model. `status.json` is only a derived snapshot; the event files are the source of truth. Events older than 120 days are pruned at startup.
 
 Known limits on OpenCode 2.2.6:
 
@@ -299,28 +297,6 @@ Plugin options are passed through the OpenCode config entry:
 | `debug` | `false` | Also print log lines to stderr |
 | `usageURL` | official Go usage URL | Override for tests |
 | `upstream` | `https://opencode.ai` | Override for tests |
-
-## Development
-
-```bash
-bun install
-bun test
-bun run typecheck
-bun run build
-```
-
-The test suite covers quota parsing, account selection, header rewriting, ledger aggregation, owner resolution, dashboard routes, CLI commands, portable data paths, raw JSON/SSE usage extraction, and full plugin-hook integration tests with a mock Go server (rotation, 429 failover, streaming usage capture, exact list cost and allowance, shared-instance attribution, estimated fallback).
-
-## Publishing
-
-The package name `opencode-go-pool` is unscoped and currently available on npm.
-
-```bash
-npm login
-npm publish
-```
-
-`prepack` runs the Node-targeted build, so the tarball contains only `dist/`, `README.md`, `LICENSE` and `package.json`. Bump `version` before each publish; npm versions are immutable.
 
 ## License
 

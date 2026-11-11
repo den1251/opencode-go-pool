@@ -94,11 +94,8 @@ describe("cli", () => {
     expect(JSON.parse(json.stdout).owner).toBe("alice")
   })
 
-  test("shows, sets and uses owners and accounts", async () => {
+  test("uses accounts", async () => {
     const dir = await fixture()
-    expect((await run(dir, ["owner"])).stdout.trim()).toBe("alice")
-    expect((await run(dir, ["owner", "bob"])).stdout).toContain("bob")
-    expect((await run(dir, ["owner"])).stdout.trim()).toBe("bob")
     const use = await run(dir, ["use", "Account B"])
     expect(use.code).toBe(0)
     const state = JSON.parse(await readFile(join(dir, "accounts.json"), "utf8"))

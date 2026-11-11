@@ -1069,86 +1069,6 @@ async function appendSwitch(file, entry) {
   current.push(entry);
   await writeJsonAtomic(file, current.slice(-100), 420);
 }
-function money(value) {
-  if (!Number.isFinite(value) || value <= 0)
-    return "$0.00";
-  if (value < 0.0001)
-    return `$${trimZeros(value.toFixed(8))}`;
-  if (value < 0.01)
-    return `$${value.toFixed(6)}`;
-  if (value < 1)
-    return `$${value.toFixed(4)}`;
-  return `$${value.toFixed(2)}`;
-}
-function trimZeros(value) {
-  return value.replace(/0+$/, "").replace(/\.$/, "");
-}
-function compact(value) {
-  if (value >= 1e6)
-    return `${(value / 1e6).toFixed(1)}M`;
-  if (value >= 1000)
-    return `${(value / 1000).toFixed(1)}k`;
-  return String(value);
-}
-function tokensText(tokens) {
-  return `${compact(tokens.input)} in / ${compact(tokens.output)} out`;
-}
-function planText(allowance) {
-  return allowance > 0 ? `${money(allowance)} plan` : "plan n/a";
-}
-function formatStatusMarkdown(status) {
-  const lines = [];
-  lines.push(`### OpenCode Go pool`);
-  lines.push("");
-  lines.push("| | Account | Key | 5h | Week | Month | Today | Month $ | Plan $ |");
-  lines.push("|---|---|---|---|---|---|---|---|---|");
-  for (const account of status.accounts) {
-    const mark = account.active ? "**active**" : account.usable ? "ready" : "blocked";
-    lines.push(`| ${mark} | ${escape(account.label)} | \`${account.keyHint}\` | ${quotaCell(account.quota?.rolling)} | ${quotaCell(account.quota?.weekly)} | ${quotaCell(account.quota?.monthly)} | ${money(account.today.cost)} | ${money(account.month.cost)} | ${account.month.allowance > 0 ? money(account.month.allowance) : "—"} |`);
-  }
-  lines.push("");
-  lines.push(`**This machine today:** ${money(status.today.cost)} list · ${planText(status.today.allowance)} · ${tokensText(status.today.tokens)} · ${status.today.entries} request(s)`);
-  lines.push(`**This machine month:** ${money(status.month.cost)} list · ${planText(status.month.allowance)} · ${tokensText(status.month.tokens)} · ${status.month.entries} request(s)`);
-  if (status.month.models.length > 0) {
-    lines.push("");
-    lines.push("| Model | Requests | Tokens | List $ | Plan $ |");
-    lines.push("|---|---:|---:|---:|---:|");
-    for (const model of status.month.models.slice(0, 12)) {
-      lines.push(`| ${escape(model.model)} | ${model.requests} | ${compact(model.input + model.output + model.reasoning)} | ${money(model.cost)} | ${model.allowance > 0 ? money(model.allowance) : "—"} |`);
-    }
-  }
-  if (status.month.estimated > 0) {
-    lines.push("");
-    lines.push(`_Cost includes catalog estimates for ${status.month.estimated} request(s) without an exact list cost._`);
-  }
-  if (status.dashboard) {
-    lines.push("");
-    lines.push(`[Open dashboard](${status.dashboard.url})`);
-  }
-  lines.push("");
-  lines.push(`Machine: \`${status.machineID}\``);
-  return lines.join(`
-`);
-}
-function quotaCell(value) {
-  if (!value)
-    return "—";
-  const reset = value.resetsAt ? ` (${resetText(value.resetsAt)})` : "";
-  return `${value.limited ? "LIMIT " : ""}${value.percent.toFixed(1)}%${reset}`;
-}
-function resetText(ts) {
-  const seconds = Math.max(0, Math.round((ts - Date.now()) / 1000));
-  if (seconds < 60)
-    return `${seconds}s`;
-  if (seconds < 3600)
-    return `${Math.round(seconds / 60)}m`;
-  if (seconds < 86400)
-    return `${(seconds / 3600).toFixed(1)}h`;
-  return `${(seconds / 86400).toFixed(1)}d`;
-}
-function escape(value) {
-  return value.replaceAll("|", "\\|");
-}
 
 // src/usage.ts
 function normalizeRawUsage(value) {
@@ -1905,27 +1825,6 @@ var server_default = {
           logger.error("event subscription failed", error);
       });
     }
-    async function registerCommand() {
-      const registration = await ctx.command.transform((editor) => {
-        editor.add({
-          name: "gopool",
-          description: "show OpenCode Go pool quota and spend",
-          execute: async (input) => {
-            await refreshAll(true).catch((error) => logger.error("failed to refresh quotas", error));
-            aggregates = await loadAggregates();
-            await currentOwner();
-            const status = makeStatus();
-            await writeCurrentStatus().catch(() => {});
-            await ctx.session.synthetic({
-              sessionID: input.sessionID,
-              text: formatStatusMarkdown(status),
-              description: "OpenCode Go pool status"
-            });
-          }
-        });
-      });
-      registrations.push(registration);
-    }
     async function registerHooks() {
       const request = await ctx.session.hook("http.request", onRequest, { providerID: PROVIDER_ID });
       registrations.push(request);
@@ -1984,7 +1883,6 @@ var server_default = {
       if (accounts.length === 0)
         logger.warn("no OpenCode Go connections found yet");
       await registerHooks();
-      await registerCommand();
       await startDashboardIfEnabled();
       startEventLoop();
       await writeCurrentStatus().catch((error) => logger.error("failed to write initial status", error));

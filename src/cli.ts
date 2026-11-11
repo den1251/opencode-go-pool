@@ -8,7 +8,6 @@ import type { AccountState, ClearFilter, DashboardInfo, Status, UsageEntry } fro
 import { clearUsage, readUsageEntries } from "./clear"
 import { configDirectory, dataDirectory, paths } from "./config"
 import { readJson, withLock, writeJsonAtomic } from "./fs-utils"
-import { resolveOwner, setOwner } from "./identity"
 import { formatStatusTable } from "./status"
 
 const directory = dataDirectory()
@@ -33,8 +32,6 @@ async function main() {
       return clear(args)
     case "export":
       return exportUsage(args)
-    case "owner":
-      return ownerCommand(args)
     case "open":
       return openDashboard()
     case "url":
@@ -233,7 +230,7 @@ async function installPackage() {
     process.exitCode = code
     return
   }
-  console.log("Installed. Restart OpenCode to load the plugin and /gopool.")
+  console.log("Installed. Restart OpenCode to load the plugin. Use the opencode-go-pool CLI for status.")
 }
 
 async function uninstall() {
@@ -288,15 +285,6 @@ async function printURL() {
     return
   }
   console.log(info.url)
-}
-
-async function ownerCommand(args: string[]) {
-  if (args.length === 0) {
-    console.log(await resolveOwner(directory))
-    return
-  }
-  const name = await setOwner(directory, args.join(" "))
-  console.log(`Owner set to: ${name}`)
 }
 
 async function clear(args: string[]) {
@@ -403,7 +391,7 @@ async function resolveAccount(selector: string | undefined) {
 }
 
 function describeFilter(filter: ClearFilter) {
-  if (filter.all) return "all owners and accounts"
+  if (filter.all) return "all usage on this PC"
   const parts = [
     filter.owner ? `owner ${filter.owner}` : undefined,
     filter.accountID ? `account ${filter.accountID}` : undefined,
@@ -515,7 +503,6 @@ Usage:
   opencode-go-pool use <n|id|label>   Make an account active
   opencode-go-pool add                Add an account through OpenCode login
   opencode-go-pool refresh            Refresh quota through the running dashboard
-  opencode-go-pool owner [name]       Show or set this machine's owner label
   opencode-go-pool clear [options]    Delete local usage (account/day/month/all)
   opencode-go-pool export [options]   Export local usage as JSON or CSV
   opencode-go-pool open               Open the dashboard in a browser
@@ -525,7 +512,6 @@ Usage:
   opencode-go-pool uninstall          Remove the plugin entry
 
 Clear options:
-  --owner <name>   only this owner (legacy metadata)
   --account <n>    only this account
   --today          only today
   --month YYYY-MM  only this month
@@ -533,7 +519,6 @@ Clear options:
   --yes            skip confirmation
 
 Export options:
-  --owner <name>   only this owner
   --month YYYY-MM  only this month
   --csv            CSV instead of JSON
   --out <file>     write to a file

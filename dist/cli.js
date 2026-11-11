@@ -3,7 +3,7 @@
 // src/cli.ts
 import { spawn } from "node:child_process";
 import { access, readFile as readFile3, unlink as unlink3, writeFile as writeFile2 } from "node:fs/promises";
-import { delimiter, join as join5 } from "node:path";
+import { delimiter, join as join4 } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
@@ -166,39 +166,6 @@ async function withLock(directory, name, run, timeoutMs = 4000) {
   }
 }
 
-// src/identity.ts
-import { userInfo } from "node:os";
-import { join as join4 } from "node:path";
-function ownerFile(directory) {
-  return join4(directory, "owner.json");
-}
-function cleanOwner(value) {
-  if (typeof value !== "string")
-    return;
-  const cleaned = value.trim().replaceAll(/\s+/g, " ").slice(0, 64);
-  return cleaned.length > 0 ? cleaned : undefined;
-}
-async function resolveOwner(directory, configured) {
-  const record = await readJson(ownerFile(directory));
-  if (record?.version === 1 && cleanOwner(record.name))
-    return cleanOwner(record.name);
-  return cleanOwner(configured) ?? cleanOwner(process.env.OPENCODE_GO_POOL_OWNER) ?? defaultOwner();
-}
-async function setOwner(directory, value) {
-  const name = cleanOwner(value);
-  if (!name)
-    throw new Error("Owner name must not be empty");
-  await writeJsonAtomic(ownerFile(directory), { version: 1, name, updatedAt: Date.now() });
-  return name;
-}
-function defaultOwner() {
-  try {
-    return userInfo().username || "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-
 // src/status.ts
 function money(value) {
   if (!Number.isFinite(value) || value <= 0)
@@ -307,8 +274,6 @@ async function main() {
       return clear(args);
     case "export":
       return exportUsage(args);
-    case "owner":
-      return ownerCommand(args);
     case "open":
       return openDashboard();
     case "url":
@@ -500,7 +465,7 @@ async function installPackage() {
     process.exitCode = code;
     return;
   }
-  console.log("Installed. Restart OpenCode to load the plugin and /gopool.");
+  console.log("Installed. Restart OpenCode to load the plugin. Use the opencode-go-pool CLI for status.");
 }
 async function uninstall() {
   const binary = await findExecutable("opencode");
@@ -510,10 +475,10 @@ async function uninstall() {
       await runOpencode(binary, ["plugin", "remove", target], true);
     }
   }
-  await unlink3(join5(configDirectory(), "plugin", "opencode-go-pool")).catch(() => {});
+  await unlink3(join4(configDirectory(), "plugin", "opencode-go-pool")).catch(() => {});
   if (await pluginEntryRemains(root)) {
     console.error("The plugin entry is still present in the OpenCode config.");
-    console.error(`Remove ${root} or opencode-go-pool from ${join5(configDirectory(), "opencode.jsonc")} manually.`);
+    console.error(`Remove ${root} or opencode-go-pool from ${join4(configDirectory(), "opencode.jsonc")} manually.`);
     process.exitCode = 1;
     return;
   }
@@ -523,7 +488,7 @@ async function uninstall() {
 }
 async function pluginEntryRemains(root) {
   for (const name of ["opencode.jsonc", "opencode.json"]) {
-    const text = await readFile3(join5(configDirectory(), name), "utf8").catch(() => "");
+    const text = await readFile3(join4(configDirectory(), name), "utf8").catch(() => "");
     if (text.includes(root) || text.includes("opencode-go-pool"))
       return true;
   }
@@ -552,14 +517,6 @@ async function printURL() {
     return;
   }
   console.log(info.url);
-}
-async function ownerCommand(args) {
-  if (args.length === 0) {
-    console.log(await resolveOwner(directory));
-    return;
-  }
-  const name = await setOwner(directory, args.join(" "));
-  console.log(`Owner set to: ${name}`);
 }
 async function clear(args) {
   const filter = {};
@@ -683,7 +640,7 @@ async function resolveAccount(selector) {
 }
 function describeFilter(filter) {
   if (filter.all)
-    return "all owners and accounts";
+    return "all usage on this PC";
   const parts = [
     filter.owner ? `owner ${filter.owner}` : undefined,
     filter.accountID ? `account ${filter.accountID}` : undefined,
@@ -768,7 +725,7 @@ async function findExecutable(name) {
   const extensions = process.platform === "win32" ? [".exe", ".cmd", ".bat", ""] : [""];
   for (const directory of (process.env.PATH ?? "").split(delimiter)) {
     for (const extension of extensions) {
-      const candidate = join5(directory, name + extension);
+      const candidate = join4(directory, name + extension);
       try {
         await access(candidate);
         return candidate;
@@ -786,7 +743,6 @@ Usage:
   opencode-go-pool use <n|id|label>   Make an account active
   opencode-go-pool add                Add an account through OpenCode login
   opencode-go-pool refresh            Refresh quota through the running dashboard
-  opencode-go-pool owner [name]       Show or set this machine's owner label
   opencode-go-pool clear [options]    Delete local usage (account/day/month/all)
   opencode-go-pool export [options]   Export local usage as JSON or CSV
   opencode-go-pool open               Open the dashboard in a browser
@@ -796,7 +752,6 @@ Usage:
   opencode-go-pool uninstall          Remove the plugin entry
 
 Clear options:
-  --owner <name>   only this owner (legacy metadata)
   --account <n>    only this account
   --today          only today
   --month YYYY-MM  only this month
@@ -804,7 +759,6 @@ Clear options:
   --yes            skip confirmation
 
 Export options:
-  --owner <name>   only this owner
   --month YYYY-MM  only this month
   --csv            CSV instead of JSON
   --out <file>     write to a file

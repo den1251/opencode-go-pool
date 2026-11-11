@@ -39,8 +39,6 @@ class Queue<T> implements AsyncIterable<T>, AsyncIterator<T> {
 
 function mockContext(connections: Array<{ id: string; label: string; key: string }>) {
   const hooks: Record<string, (input: any) => Promise<void> | void> = {}
-  const commands: Record<string, any> = {}
-  const synthetic: string[] = []
   const queue = new Queue<any>()
   const context = {
     options: {},
@@ -91,18 +89,9 @@ function mockContext(connections: Array<{ id: string; label: string; key: string
         hooks[name] = callback
         return { async dispose() {} }
       },
-      async synthetic(input: { text: string }) {
-        synthetic.push(input.text)
-      },
-    },
-    command: {
-      async transform(callback: (editor: { add(definition: any): void }) => void) {
-        callback({ add: (definition) => (commands[definition.name] = definition) })
-        return { async dispose() {} }
-      },
     },
   }
-  return { context, hooks, commands, synthetic, queue }
+  return { context, hooks, queue }
 }
 
 const dirs: string[] = []
@@ -159,7 +148,6 @@ describe("plugin integration", () => {
     await Bun.sleep(100)
     expect(mock.hooks["http.request"]).toBeDefined()
     expect(mock.hooks["http.response"]).toBeDefined()
-    expect(mock.commands.gopool).toBeDefined()
 
     const request = () =>
       new Request("https://opencode.ai/inference/go/openai/v1/chat/completions", {
@@ -205,11 +193,6 @@ describe("plugin integration", () => {
     expect(status.month.owners.alice?.cost).toBe(0.25)
     expect(status.month.models[0]?.model).toBe("deepseek-v4")
     expect(status.accounts[0]?.active).toBe(true)
-
-    await mock.commands.gopool.execute({ sessionID: "ses_1" })
-    expect(mock.synthetic.at(-1)).toContain("Account 1")
-    expect(mock.synthetic.at(-1)).toContain("deepseek-v4")
-    expect(mock.synthetic.at(-1)).toContain("$0.2500")
 
     mock.queue.push({
       id: "evt_step_2",

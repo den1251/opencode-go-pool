@@ -13,7 +13,7 @@ import { resolveMachine } from "./machine"
 import { aggregateUsage, applyEntry, dayKey, monthKey, normalizeTokens, pruneUsage, recordUsage } from "./ledger"
 import { fetchQuota, limitingReset, nextReset, quotaFresh } from "./quota"
 import { selectAccount } from "./selection"
-import { appendSwitch, buildStatus, formatStatusMarkdown, readSwitches, writeStatus } from "./status"
+import { appendSwitch, buildStatus, readSwitches, writeStatus } from "./status"
 import { loadAccountState, reconcileAccounts, setActiveAccount } from "./state-store"
 import { readResponseUsage, type RawUsage } from "./usage"
 
@@ -37,13 +37,9 @@ interface PluginContext extends DiscoveryContext {
       callback: (input: HttpResponseInput) => Promise<void> | void,
       options?: { providerID?: string },
     ): Promise<Registration>
-    synthetic(input: { sessionID: string; text: string; description?: string }): Promise<unknown>
   }
   model: {
     list(input?: unknown): Promise<{ data: ModelInfo[] }>
-  }
-  command: {
-    transform(callback: (editor: { add(definition: CommandDefinition): void }) => void): Promise<Registration>
   }
 }
 
@@ -64,12 +60,6 @@ interface HttpRequestInput {
 
 interface HttpResponseInput extends HttpRequestInput {
   response: Response
-}
-
-interface CommandDefinition {
-  name: string
-  description?: string
-  execute(input: { sessionID: string; prompt?: { text?: string } }): Promise<void>
 }
 
 interface ModelInfo {
@@ -721,28 +711,6 @@ export default {
       })
     }
 
-    async function registerCommand() {
-      const registration = await ctx.command.transform((editor) => {
-        editor.add({
-          name: "gopool",
-          description: "show OpenCode Go pool quota and spend",
-          execute: async (input) => {
-            await refreshAll(true).catch((error) => logger.error("failed to refresh quotas", error))
-            aggregates = await loadAggregates()
-            await currentOwner()
-            const status = makeStatus()
-            await writeCurrentStatus().catch(() => {})
-            await ctx.session.synthetic({
-              sessionID: input.sessionID,
-              text: formatStatusMarkdown(status),
-              description: "OpenCode Go pool status",
-            })
-          },
-        })
-      })
-      registrations.push(registration)
-    }
-
     async function registerHooks() {
       const request = await ctx.session.hook("http.request", onRequest, { providerID: PROVIDER_ID })
       registrations.push(request)
@@ -804,7 +772,6 @@ export default {
       await reloadAccounts()
       if (accounts.length === 0) logger.warn("no OpenCode Go connections found yet")
       await registerHooks()
-      await registerCommand()
       await startDashboardIfEnabled()
       startEventLoop()
       await writeCurrentStatus().catch((error) => logger.error("failed to write initial status", error))
