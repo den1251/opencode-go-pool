@@ -4,14 +4,6 @@
   "description": "Multi-account pool, quota monitor and local usage ledger for OpenCode Go",
   "type": "module",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/den1251/opencode-go-pool.git"
-  },
-  "bugs": {
-    "url": "https://github.com/den1251/opencode-go-pool/issues"
-  },
-  "homepage": "https://github.com/den1251/opencode-go-pool#readme",
   "keywords": [
     "opencode",
     "opencode-go",
