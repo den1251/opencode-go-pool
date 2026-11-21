@@ -54,7 +54,9 @@ describe("ledger", () => {
     const dir = await directory()
     expect(await recordUsage(dir, entry())).toBe(true)
     expect(await recordUsage(dir, entry())).toBe(false)
-    expect((await readdir(dir)).length).toBe(1)
+    const names = await readdir(dir)
+    expect(names.length).toBe(1)
+    expect(names.some((name) => name.endsWith(".tmp"))).toBe(false)
   })
 
   test("aggregates models, accounts and owners for a month", async () => {
@@ -86,6 +88,18 @@ describe("ledger", () => {
     expect(month.owners.alice?.cost).toBe(0.5)
     expect(month.owners.bob?.cost).toBe(1.5)
     expect(month.models[0]?.model).toBe("other")
+  })
+
+  test("keeps model display names alongside model IDs", async () => {
+    const dir = await directory()
+    await recordUsage(dir, entry({ id: "evt_1" }))
+    await recordUsage(dir, entry({ id: "evt_2", modelName: "DeepSeek V4.1 Flash 1017" }))
+    await recordUsage(dir, entry({ id: "evt_3", model: "glm-5.3", modelName: "GLM-5.3" }))
+    const month = await aggregateUsage(dir, { month: "2026-11" })
+    const deepseek = month.models.find((model) => model.model === "deepseek-v4")
+    expect(deepseek?.modelName).toBe("DeepSeek V4.1 Flash 1017")
+    expect(deepseek?.requests).toBe(2)
+    expect(month.models.find((model) => model.model === "glm-5.3")?.modelName).toBe("GLM-5.3")
   })
 
   test("aggregates a single day", async () => {

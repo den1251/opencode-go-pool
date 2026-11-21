@@ -63,16 +63,42 @@ Desktop reads the same global config; restart the desktop app instead.
 
 ### Install the CLI globally
 
+Installing the plugin through OpenCode puts it in OpenCode's plugin cache, not in the global npm prefix, so it does not add `opencode-go-pool` to `PATH`. Install the CLI separately:
+
 ```bash
 npm install -g opencode-go-pool
+# or
+bun add -g opencode-go-pool
+
 opencode-go-pool install
 opencode-go-pool uninstall
 ```
 
+Without a global install, use `npx opencode-go-pool status` instead.
+
+If npm's global prefix is system-owned (for example `/usr`), install into a user prefix and make sure its `bin` directory is on `PATH`:
+
+```bash
+npm install -g --prefix ~/.local opencode-go-pool
+```
+
+### Update
+
+The plugin and the CLI are installed separately and update separately:
+
+```bash
+opencode plugin check opencode-go-pool
+opencode plugin update opencode-go-pool
+
+bun add -g opencode-go-pool@latest
+```
+
+Restart OpenCode after updating the plugin.
+
 ### Local development
 
 ```bash
-git clone <repo>
+git clone https://github.com/den1251/opencode-go-pool.git
 cd opencode-go-pool
 bun install
 bun run build
@@ -118,6 +144,22 @@ opencode-go-pool open            # open the dashboard
 ```
 
 Inside OpenCode, the plugin works without any command. Run the CLI in a terminal for status.
+
+The table lists every model separately for today and for the current month, with requests, input/output tokens, list cost and Go plan usage per model. Today's model table is omitted when its totals are identical to the month's.
+
+Each `status` run recomputes today's and the month's usage from `events/`, so it stays correct when several OpenCode processes or plugin instances write events at the same time.
+
+### OpenCode TUI
+
+The TUI part is on demand and adds no persistent footer or status text. Run `/go-pool` or pick **Go pool usage** in the command palette to open the usage table.
+
+### OpenCode Desktop
+
+The GUI part is on demand and adds no composer pill or other always-visible indicator. Open the **Go Pool** side panel from the session panel **+** menu or with `/go-pool`. The panel shows account quotas, today and month totals, per-model usage, and a **Refresh** button.
+
+Both views fetch usage when opened; there is no background polling and no passive usage text.
+
+The server, TUI and GUI parts ship in one package; installing the plugin is enough. The GUI part loads only in OpenCode Desktop, not in the browser client.
 
 The optional dashboard is a local HTTP page on `127.0.0.1` with a random token in the URL. It is off by default; enable it with `"dashboard": true` in the plugin options. It shows account quota bars, active account, per-model tokens, list cost and Go plan usage, and recent switches. It is read-only except for **Refresh quota** and **Clear all local usage**.
 
@@ -198,6 +240,7 @@ Each completed step writes one JSON file to `events/`, named `<UTC day>__<event 
   "accountLabel": "Personal",
   "providerID": "opencode-go",
   "model": "deepseek-v4.1-flash",
+  "modelName": "DeepSeek V4.1 Flash 1017",
   "cost": 0.00412,
   "listCost": 0.00412,
   "allowance": 0.003,
@@ -232,6 +275,7 @@ The fields have these meanings:
 
 | Field | Meaning |
 |---|---|
+| `modelName` | Human-readable model name from the OpenCode model catalog; older entries keep the model ID until migrated |
 | `cost` | Best available value: `listCost`, then a positive `charged` amount, then the catalog estimate |
 | `listCost` | Exact list value from `usage.opencode.list_cost` |
 | `allowance` | Go plan dollars counted by this request |
@@ -297,6 +341,57 @@ Plugin options are passed through the OpenCode config entry:
 | `debug` | `false` | Also print log lines to stderr |
 | `usageURL` | official Go usage URL | Override for tests |
 | `upstream` | `https://opencode.ai` | Override for tests |
+
+## Publishing
+
+For maintainers:
+
+1. Bump `version` in `package.json`.
+2. Run `bun run typecheck` and `bun test`.
+3. Run `bun run build`.
+4. Check the package contents with `npm pack --dry-run`.
+5. Log in to npm and confirm the account:
+
+```bash
+npm login
+npm whoami
+```
+
+6. Publish with 2FA. A direct publish prompts for the 2FA challenge:
+
+```bash
+npm publish
+```
+
+Non-interactive, with a current one-time code:
+
+```bash
+npm publish --otp=123456
+```
+
+If the CLI cannot complete your security-key challenge, use staged publishing instead. Staging does not require 2FA; approving does:
+
+```bash
+npm stage publish
+npm stage list
+npm stage approve <stage-id>
+```
+
+You can also approve the staged version in the browser on npmjs.com under **Staged Packages**.
+
+For automated releases, configure trusted publishing (OIDC) instead of a bypass-2FA token.
+
+`publishConfig.access` is already `public`.
+
+After publishing:
+
+```bash
+npm view opencode-go-pool version
+opencode plugin update opencode-go-pool
+bun add -g opencode-go-pool@latest
+```
+
+Restart OpenCode to load the new plugin version. If the OpenCode config points at a local checkout, replace that path with `opencode-go-pool` before updating.
 
 ## License
 

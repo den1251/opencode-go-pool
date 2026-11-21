@@ -111,7 +111,94 @@ describe("status", () => {
     expect(text).toContain("Today:")
     expect(text).toContain("This month:")
     expect(text).toContain("$0.4000 plan")
+    expect(text).toContain("Models this month")
+    expect(text).toContain("deepseek-v4")
     expect(text).toContain("Dashboard:")
+  })
+
+  test("lists different models separately for today and month", () => {
+    const status = buildStatus({
+      dataDir: "/data",
+      owner: "alice",
+      machineID: "mch_test",
+      accounts,
+      state,
+      quotas,
+      cooldowns,
+      today: aggregate({
+        entries: 1,
+        models: [modelUsage({ model: "glm-5.3", requests: 1, cost: 0.02, allowance: 0.01 })],
+      }),
+      month: aggregate({
+        entries: 3,
+        models: [
+          modelUsage({ model: "deepseek-v4", requests: 1, cost: 0.5, allowance: 0.4 }),
+          modelUsage({ model: "glm-5.3", requests: 1, cost: 0.02, allowance: 0.01 }),
+          modelUsage({ model: "kimi-k3", requests: 1, cost: 0.1, allowance: 0 }),
+        ],
+      }),
+      switches: [],
+      threshold: 100,
+    })
+    const lines = formatStatusTable(status).split("\n")
+    const todayIndex = lines.indexOf("Models today")
+    const monthIndex = lines.indexOf("Models this month")
+    expect(todayIndex).toBeGreaterThan(-1)
+    expect(monthIndex).toBeGreaterThan(todayIndex)
+    expect(lines.slice(todayIndex, monthIndex).join("\n")).toContain("glm-5.3")
+    expect(lines.slice(todayIndex, monthIndex).join("\n")).not.toContain("deepseek-v4")
+    expect(lines.slice(monthIndex).join("\n")).toContain("deepseek-v4")
+    expect(lines.slice(monthIndex).join("\n")).toContain("glm-5.3")
+    expect(lines.slice(monthIndex).find((line) => line.includes("kimi-k3"))?.trimEnd().endsWith("—")).toBe(true)
+  })
+
+  test("shows model display names instead of IDs", () => {
+    const status = buildStatus({
+      dataDir: "/data",
+      owner: "alice",
+      machineID: "mch_test",
+      accounts,
+      state,
+      quotas,
+      cooldowns,
+      today: empty,
+      month: aggregate({
+        entries: 1,
+        models: [
+          modelUsage({
+            model: "deepseek-v4.1-flash",
+            modelName: "DeepSeek V4.1 Flash 1017",
+            requests: 1,
+            cost: 0.5,
+            allowance: 0.4,
+          }),
+        ],
+      }),
+      switches: [],
+      threshold: 100,
+    })
+    const text = formatStatusTable(status)
+    expect(text).toContain("DeepSeek V4.1 Flash 1017")
+    expect(text).not.toContain("deepseek-v4.1-flash")
+  })
+
+  test("omits the model table when no usage is recorded", () => {
+    const status = buildStatus({
+      dataDir: "/data",
+      owner: "alice",
+      machineID: "mch_test",
+      accounts,
+      state,
+      quotas,
+      cooldowns,
+      today: empty,
+      month: empty,
+      switches: [],
+      threshold: 100,
+    })
+    const text = formatStatusTable(status)
+    expect(text).not.toContain("Models today")
+    expect(text).not.toContain("Models this month")
   })
 
   test("does not repeat identical today and month totals", () => {
@@ -132,6 +219,8 @@ describe("status", () => {
     expect(text).toContain("This machine:")
     expect(text).not.toContain("This month:")
     expect(text).not.toContain("Today:")
+    expect(text).toContain("Models this month")
+    expect(text).not.toContain("Models today")
   })
 
   test("small formatting helpers", () => {

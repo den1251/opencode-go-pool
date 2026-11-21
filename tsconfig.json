@@ -4,6 +4,8 @@
     "module": "Preserve",
     "moduleResolution": "bundler",
     "lib": ["ES2022", "DOM"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/solid",
     "types": ["bun"],
     "strict": true,
     "noUncheckedIndexedAccess": true,

@@ -3,9 +3,9 @@ import { join } from "node:path"
 import { readFile } from "node:fs/promises"
 import type { UsageEntry } from "../src/types"
 import { buildStatus } from "../src/status"
-import { recordUsage } from "../src/ledger"
+import { recordUsage, dayKey } from "../src/ledger"
 import { ensureDir, writeJsonAtomic } from "../src/fs-utils"
-import { cleanup, tempDir, account, accountUsage, aggregate, tokens } from "./helpers"
+import { cleanup, tempDir, account, accountUsage, aggregate, modelUsage, tokens } from "./helpers"
 
 const dirs: string[] = []
 afterEach(async () => {
@@ -30,6 +30,19 @@ async function fixture() {
   const dir = await tempDir("cli")
   dirs.push(dir)
   await ensureDir(dir)
+  const yesterday = Date.now() - 86_400_000
+  await recordUsage(
+    join(dir, "events"),
+    entry({
+      ts: yesterday,
+      day: dayKey(yesterday),
+      model: "deepseek-v4.1-flash",
+      modelName: "DeepSeek V4.1 Flash 1017",
+      cost: 0.5,
+      listCost: 0.5,
+      allowance: 0.1,
+    }),
+  )
   const accounts = [account({ id: "a", label: "Account A" }), account({ id: "b", label: "Account B" })]
   const status = buildStatus({
     dataDir: dir,
@@ -46,6 +59,7 @@ async function fixture() {
       listCost: 0.5,
       allowance: 0.1,
       tokens: tokens({ input: 100, output: 20 }),
+      models: [modelUsage({ model: "deepseek-v4.1-flash", modelName: "DeepSeek V4.1 Flash 1017", requests: 1, cost: 0.5, listCost: 0.5, allowance: 0.1, ...tokens({ input: 100, output: 20 }) })],
       owners: { alice: accountUsage({ requests: 1, cost: 0.5, listCost: 0.5, allowance: 0.1, tokens: tokens({ input: 100, output: 20 }) }) },
     }),
     switches: [],
@@ -90,8 +104,35 @@ describe("cli", () => {
     expect(table.code).toBe(0)
     expect(table.stdout).toContain("Account A")
     expect(table.stdout).toContain("OpenCode Go Pool")
+    expect(table.stdout).toContain("Models this month")
+    expect(table.stdout).toContain("DeepSeek V4.1 Flash 1017")
     const json = await run(dir, ["status", "--json"])
     expect(JSON.parse(json.stdout).owner).toBe("alice")
+  })
+
+  test("recomputes usage from events instead of trusting a stale status file", async () => {
+    const dir = await fixture()
+    await recordUsage(
+      join(dir, "events"),
+      entry({ cost: 0.75, listCost: 0.75, allowance: 0.05 }),
+    )
+    const result = await run(dir, ["status", "--json"])
+    expect(result.code).toBe(0)
+    const parsed = JSON.parse(result.stdout)
+    expect(parsed.month.entries).toBe(2)
+    expect(parsed.month.cost).toBeCloseTo(1.25, 10)
+    expect(parsed.today.entries).toBe(1)
+    const accountA = parsed.accounts.find((item: { id: string }) => item.id === "a")
+    expect(accountA.month.cost).toBeCloseTo(1.25, 10)
+    expect(accountA.today.cost).toBeCloseTo(0.75, 10)
+  })
+
+  test("prints the package version", async () => {
+    const dir = await fixture()
+    const pkg = JSON.parse(await readFile(join(import.meta.dir, "..", "package.json"), "utf8"))
+    const result = await run(dir, ["--version"])
+    expect(result.code).toBe(0)
+    expect(result.stdout.trim()).toBe(`opencode-go-pool ${pkg.version}`)
   })
 
   test("uses accounts", async () => {
@@ -118,7 +159,7 @@ describe("cli", () => {
 
     const cleared = await run(dir, ["clear", "--owner", "alice", "--yes"])
     expect(cleared.code).toBe(0)
-    expect(cleared.stdout).toContain("Cleared 1")
+    expect(cleared.stdout).toContain("Cleared 2")
     const remaining = await run(dir, ["export", "--json"])
     const parsed = JSON.parse(remaining.stdout)
     expect(parsed).toHaveLength(1)

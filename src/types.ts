@@ -64,6 +64,7 @@ export interface UsageEntry {
   accountLabel: string
   providerID: string
   model: string
+  modelName?: string
   source: string
   cost: number
   estimated: boolean
@@ -79,6 +80,7 @@ export interface UsageEntry {
 export interface ModelUsage extends Tokens {
   providerID: string
   model: string
+  modelName?: string
   requests: number
   cost: number
   listCost: number

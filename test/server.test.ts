@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { readFile, readdir } from "node:fs/promises"
 import { join } from "node:path"
 import plugin from "../src/server"
-import type { Status } from "../src/types"
+import { dayKey, recordUsage } from "../src/ledger"
+import type { Status, UsageEntry } from "../src/types"
 import { cleanup, tempDir } from "./helpers"
 
 class Queue<T> implements AsyncIterable<T>, AsyncIterator<T> {
@@ -39,6 +40,7 @@ class Queue<T> implements AsyncIterable<T>, AsyncIterator<T> {
 
 function mockContext(connections: Array<{ id: string; label: string; key: string }>) {
   const hooks: Record<string, (input: any) => Promise<void> | void> = {}
+  const rpcHandlers: Record<string, (input: any, context: any) => Promise<unknown>> = {}
   const queue = new Queue<any>()
   const context = {
     options: {},
@@ -78,6 +80,7 @@ function mockContext(connections: Array<{ id: string; label: string; key: string
             {
               id: "deepseek-v4",
               providerID: "opencode-go",
+              name: "DeepSeek V4.1 Flash 1017",
               cost: [{ input: 0.15, output: 0.6, cache: { read: 0.003, write: 0 } }],
             },
           ],
@@ -90,8 +93,38 @@ function mockContext(connections: Array<{ id: string; label: string; key: string
         return { async dispose() {} }
       },
     },
+    rpc: {
+      async register(_definition: unknown, handlers: Record<string, (input: any, context: any) => Promise<unknown>>) {
+        Object.assign(rpcHandlers, handlers)
+        return { async dispose() {} }
+      },
+    },
   }
-  return { context, hooks, queue }
+  return { context, hooks, queue, rpcHandlers }
+}
+
+function usageEntry(overrides: Partial<UsageEntry> = {}): UsageEntry {
+  const ts = overrides.ts ?? Date.now()
+  return {
+    id: "evt_external",
+    ts,
+    day: dayKey(ts),
+    owner: "alice",
+    machineID: "mch_test",
+    accountID: "cred_1",
+    accountLabel: "Account 1",
+    providerID: "opencode-go",
+    model: "deepseek-v4",
+    modelName: "DeepSeek V4.1 Flash 1017",
+    source: "step",
+    cost: 0.25,
+    listCost: 0.25,
+    allowance: 0,
+    estimated: false,
+    tokens: { input: 100, output: 10, reasoning: 0, cacheRead: 5, cacheWrite: 0 },
+    sessionID: "ses_external",
+    ...overrides,
+  }
 }
 
 const dirs: string[] = []
@@ -192,7 +225,12 @@ describe("plugin integration", () => {
     expect(status.month.cost).toBe(0.25)
     expect(status.month.owners.alice?.cost).toBe(0.25)
     expect(status.month.models[0]?.model).toBe("deepseek-v4")
+    expect(status.month.models[0]?.modelName).toBe("DeepSeek V4.1 Flash 1017")
     expect(status.accounts[0]?.active).toBe(true)
+
+    const rpcStatus = (await mock.rpcHandlers.status!({}, { signal: new AbortController().signal })) as Status
+    expect(rpcStatus.month.entries).toBe(1)
+    expect(rpcStatus.month.cost).toBe(0.25)
 
     mock.queue.push({
       id: "evt_step_2",
@@ -209,6 +247,23 @@ describe("plugin integration", () => {
     status = JSON.parse(await readFile(join(dir, "status.json"), "utf8")) as Status
     expect(status.month.estimated).toBe(1)
     expect(status.month.cost).toBeCloseTo(1, 5)
+
+    await recordUsage(join(dir, "events"), usageEntry())
+    mock.queue.push({
+      id: "evt_step_external_refresh",
+      created: Date.now(),
+      type: "session.step.ended",
+      data: {
+        sessionID: "ses_1",
+        model: { id: "deepseek-v4", providerID: "opencode-go" },
+        cost: 0.1,
+        tokens: { input: 10, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+      },
+    })
+    await Bun.sleep(500)
+    status = JSON.parse(await readFile(join(dir, "status.json"), "utf8")) as Status
+    expect(status.month.entries).toBe(4)
+    expect(status.month.cost).toBeCloseTo(1.35, 10)
 
     quotaFirst = 100
     await Bun.sleep(1100)
@@ -270,7 +325,7 @@ describe("plugin integration", () => {
     mock.queue.close()
     await cleanupPlugin()
     server.stop(true)
-  })
+  }, 10000)
 
   test("records exact usage from the response body", async () => {
     const dir = await tempDir("server-raw")
@@ -363,6 +418,7 @@ describe("plugin integration", () => {
     expect(stored.charged).toBe(0)
     expect(stored.billingSource).toBe("go")
     expect(stored.metering).toBe("response")
+    expect(stored.modelName).toBe("DeepSeek V4.1 Flash 1017")
 
     mock.queue.close()
     await cleanupPlugin()

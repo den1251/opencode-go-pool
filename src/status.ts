@@ -4,6 +4,7 @@ import type {
   AccountStatus,
   Aggregate,
   CooldownCache,
+  ModelUsage,
   QuotaCache,
   Status,
   SwitchEntry,
@@ -146,7 +147,8 @@ export function formatStatusTable(status: Status): string {
   })
   lines.push("")
   const totals = `This machine: ${money(status.month.cost)} list · ${planText(status.month.allowance)} · ${tokensText(status.month.tokens)} · ${status.month.entries} request(s)`
-  if (sameTotals(status.today, status.month)) {
+  const identical = sameTotals(status.today, status.month)
+  if (identical) {
     lines.push(totals)
   } else {
     lines.push(
@@ -156,6 +158,18 @@ export function formatStatusTable(status: Status): string {
       `This month: ${money(status.month.cost)} list · ${planText(status.month.allowance)} · ${tokensText(status.month.tokens)} · ${status.month.entries} request(s)`,
     )
   }
+  const modelSections: Array<readonly [string, ModelUsage[]]> = identical
+    ? [["Models this month", status.month.models]]
+    : [
+        ["Models today", status.today.models],
+        ["Models this month", status.month.models],
+      ]
+  for (const [title, models] of modelSections) {
+    if (models.length === 0) continue
+    lines.push("")
+    lines.push(...formatModelTable(title, models))
+  }
+  if (modelSections.some(([, models]) => models.length > 0)) lines.push("")
   if (status.month.estimated > 0) {
     lines.push(`Cost includes catalog estimates for ${status.month.estimated} request(s) without an exact list cost.`)
   }
@@ -165,6 +179,33 @@ export function formatStatusTable(status: Status): string {
   const last = status.switches[0]
   if (last) lines.push(`Last switch: ${last.from ?? "none"} → ${last.to} (${last.reason})`)
   return lines.join("\n")
+}
+
+function formatModelTable(title: string, models: ModelUsage[]) {
+  const widths = [30, 10, 10, 10, 12, 12]
+  const rightAligned = [false, true, true, true, true, true]
+  const row = (cells: string[]) =>
+    cells
+      .map((value, index) => {
+        const text = truncate(value, widths[index]!)
+        return rightAligned[index] ? text.padStart(widths[index]!) : text.padEnd(widths[index]!)
+      })
+      .join("  ")
+      .trimEnd()
+  const lines = [title, row(["Model", "Requests", "Input", "Output", "List $", "Plan $"])]
+  for (const model of models) {
+    lines.push(
+      row([
+        model.modelName ?? model.model,
+        String(model.requests),
+        compact(model.input),
+        compact(model.output),
+        money(model.cost),
+        model.allowance > 0 ? money(model.allowance) : "—",
+      ]),
+    )
+  }
+  return lines
 }
 
 function sameTotals(left: { entries: number; cost: number; allowance: number; tokens: Tokens }, right: { entries: number; cost: number; allowance: number; tokens: Tokens }) {

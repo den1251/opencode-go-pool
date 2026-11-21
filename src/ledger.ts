@@ -1,4 +1,5 @@
-import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises"
+import { link, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
 import { join } from "node:path"
 import type { AccountUsage, Aggregate, Tokens, UsageEntry } from "./types"
 
@@ -32,12 +33,16 @@ export async function recordUsage(directory: string, entry: UsageEntry): Promise
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const safe = entry.id.replace(/[^a-zA-Z0-9_-]/g, "_")
   const file = join(directory, `${entry.day}__${safe}.json`)
+  const temporary = join(directory, `.${safe}.${randomUUID()}.tmp`)
   try {
-    await writeFile(file, JSON.stringify(entry) + "\n", { flag: "wx", mode: 0o600 })
+    await writeFile(temporary, JSON.stringify(entry) + "\n", { flag: "wx", mode: 0o600 })
+    await link(temporary, file)
     return true
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return false
     throw error
+  } finally {
+    await unlink(temporary).catch(() => {})
   }
 }
 
@@ -124,10 +129,12 @@ function add(aggregate: Aggregate, entry: UsageEntry) {
     model.listCost += listCost
     model.allowance += allowance
     addTokens(model, entry.tokens)
+    if (!model.modelName && entry.modelName) model.modelName = entry.modelName
   } else {
     aggregate.models.push({
       providerID: entry.providerID,
       model: entry.model,
+      ...(entry.modelName ? { modelName: entry.modelName } : {}),
       requests: 1,
       cost: entry.cost,
       listCost,

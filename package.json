@@ -1,9 +1,17 @@
 {
   "name": "opencode-go-pool",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Multi-account pool, quota monitor and local usage ledger for OpenCode Go",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/den1251/opencode-go-pool.git"
+  },
+  "homepage": "https://github.com/den1251/opencode-go-pool#readme",
+  "bugs": {
+    "url": "https://github.com/den1251/opencode-go-pool/issues"
+  },
   "keywords": [
     "opencode",
     "opencode-go",
@@ -14,7 +22,10 @@
   ],
   "exports": {
     ".": "./dist/server.js",
-    "./server": "./dist/server.js"
+    "./server": "./dist/server.js",
+    "./rpc": "./dist/rpc.js",
+    "./tui": "./dist/tui.js",
+    "./gui-experimental": "./dist/gui-experimental.cjs"
   },
   "main": "./dist/server.js",
   "bin": {
@@ -32,13 +43,31 @@
     "access": "public"
   },
   "scripts": {
-    "build": "bun build src/server.ts --outdir dist --target node --format esm && bun build src/cli.ts --outdir dist --target node --format esm && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "build": "bun run build:server && bun run build:cli && bun run build:rpc && bun run build:tui && bun run build:gui && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "build:server": "bun build src/server.ts --outdir dist --target node --format esm",
+    "build:cli": "bun build src/cli.ts --outdir dist --target node --format esm",
+    "build:rpc": "bun build src/rpc.ts --outdir dist --target node --format esm",
+    "build:tui": "bun run scripts/build-tui.ts",
+    "build:gui": "vite build",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "prepack": "bun run build"
   },
+  "dependencies": {
+    "@opencode/plugin": "^2.3.2"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.6.6",
+    "@opentui/solid": ">=0.6.6",
+    "solid-js": ">=1.9.0"
+  },
   "devDependencies": {
+    "@opentui/core": "^0.9.7",
+    "@opentui/solid": "^0.9.7",
     "@types/bun": "latest",
-    "typescript": "latest"
+    "solid-js": "^1.9.12",
+    "typescript": "latest",
+    "vite": "^8.3.8",
+    "vite-plugin-solid": "^2.11.17"
   }
 }

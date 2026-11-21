@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process"
+import { readFileSync } from "node:fs"
 import { access, readFile, unlink, writeFile } from "node:fs/promises"
 import { delimiter, join } from "node:path"
 import { createInterface } from "node:readline/promises"
@@ -49,7 +50,7 @@ async function main() {
     case "version":
     case "--version":
     case "-v":
-      return console.log("opencode-go-pool 0.1.0")
+      return console.log(`opencode-go-pool ${packageVersion()}`)
     default:
       console.error(`Unknown command: ${command}`)
       help()
@@ -63,11 +64,30 @@ async function status(args: string[]) {
     console.log(`No status yet. Start OpenCode once with the plugin installed.\nData directory: ${directory}`)
     return
   }
+  const fresh = await freshStatus(value)
   if (args.includes("--json")) {
-    console.log(JSON.stringify(value, null, 2))
+    console.log(JSON.stringify(fresh, null, 2))
     return
   }
-  console.log(formatStatusTable(value))
+  console.log(formatStatusTable(fresh))
+}
+
+async function freshStatus(value: Status): Promise<Status> {
+  const now = Date.now()
+  const [today, month] = await Promise.all([
+    aggregateUsage(files.events, { day: dayKey(now) }),
+    aggregateUsage(files.events, { month: monthKey(now) }),
+  ])
+  const accounts = value.accounts.map((account) => {
+    const todayUsage = today.accounts[account.id] ?? emptyUsage()
+    const monthUsage = month.accounts[account.id] ?? emptyUsage()
+    return {
+      ...account,
+      today: { cost: todayUsage.cost, tokens: todayUsage.tokens, allowance: todayUsage.allowance },
+      month: { cost: monthUsage.cost, tokens: monthUsage.tokens, allowance: monthUsage.allowance },
+    }
+  })
+  return { ...value, generatedAt: now, accounts, today, month }
 }
 
 async function accounts() {
@@ -120,8 +140,9 @@ async function use(selector: string | undefined) {
 }
 
 async function markStatusActive(accountID: string) {
-  const status = await readStatus()
-  if (!status) return
+  const value = await readStatus()
+  if (!value) return
+  const status = await freshStatus(value)
   status.activeID = accountID
   for (const item of status.accounts) item.active = item.id === accountID
   await writeJsonAtomic(files.status, status, 0o600)
@@ -157,7 +178,7 @@ async function refresh() {
     return
   }
   const value = (await response.json()) as Status
-  console.log(formatStatusTable(value))
+  console.log(formatStatusTable(await freshStatus(value)))
 }
 
 async function openDashboard() {
@@ -276,6 +297,15 @@ async function runOpencode(binary: string, args: string[], quiet = false) {
 
 function packageRoot() {
   return fileURLToPath(new URL("..", import.meta.url))
+}
+
+function packageVersion() {
+  try {
+    const value = JSON.parse(readFileSync(join(packageRoot(), "package.json"), "utf8")) as { version?: string }
+    return value.version ?? "unknown"
+  } catch {
+    return "unknown"
+  }
 }
 
 async function printURL() {
@@ -444,6 +474,7 @@ function toCSV(entries: UsageEntry[]) {
     "accountLabel",
     "providerID",
     "model",
+    "modelName",
     "source",
     "cost",
     "listCost",
@@ -469,6 +500,7 @@ function toCSV(entries: UsageEntry[]) {
       entry.accountLabel,
       entry.providerID,
       entry.model,
+      entry.modelName ?? "",
       entry.source,
       entry.cost,
       entry.listCost ?? "",

@@ -1,4 +1,6 @@
 import { appendFile, rename, stat } from "node:fs/promises"
+import type { Rpc } from "@opencode/plugin/rpc"
+import type { RpcHandlers } from "@opencode/plugin/promise/rpc"
 import type { Aggregate, Account, AccountState, CooldownCache, PluginOptions, QuotaCache, QuotaSnapshot, Status, SwitchEntry, Tokens, UsageEntry } from "./types"
 import { applyAuthorization } from "./auth"
 import { readCooldowns, readQuotaCache, writeCooldown, writeQuotaCache } from "./cache-store"
@@ -16,6 +18,7 @@ import { selectAccount } from "./selection"
 import { appendSwitch, buildStatus, readSwitches, writeStatus } from "./status"
 import { loadAccountState, reconcileAccounts, setActiveAccount } from "./state-store"
 import { readResponseUsage, type RawUsage } from "./usage"
+import { GoPool } from "./rpc"
 
 interface Registration {
   dispose(): Promise<void>
@@ -41,6 +44,9 @@ interface PluginContext extends DiscoveryContext {
   model: {
     list(input?: unknown): Promise<{ data: ModelInfo[] }>
   }
+  rpc?: {
+    register<D extends Rpc.PortableDefinition>(definition: D, handlers: RpcHandlers<D>): Promise<Registration>
+  }
 }
 
 interface PluginEvent {
@@ -65,6 +71,7 @@ interface HttpResponseInput extends HttpRequestInput {
 interface ModelInfo {
   id: string
   providerID: string
+  name?: string
   cost: PricingTier[]
 }
 
@@ -159,6 +166,7 @@ export default {
     const pendingUsage = shared.pendingUsage
     const processedEvents = shared.processedEvents
     const pricing = new Map<string, PricingTier[]>()
+    const modelNames = new Map<string, string>()
     let pricingAt = 0
     const inFlight = new Map<string, Promise<QuotaSnapshot>>()
     const registrations: Registration[] = []
@@ -199,11 +207,17 @@ export default {
         for (const model of result.data) {
           if (model.providerID !== PROVIDER_ID) continue
           pricing.set(model.id, model.cost)
+          if (model.name) modelNames.set(model.id, model.name)
         }
         pricingAt = Date.now()
       } catch (error) {
         logger.error("failed to load model pricing", error)
       }
+    }
+
+    async function modelNameFor(modelID: string) {
+      if (!modelNames.has(modelID)) await loadPricing()
+      return modelNames.get(modelID)
     }
 
     async function estimatedCostFor(modelID: string, tokens: Tokens) {
@@ -252,8 +266,41 @@ export default {
 
     async function writeCurrentStatus() {
       const marker = await readJson<{ at?: number }>(files.clearRequest)
-      if (typeof marker?.at === "number" && marker.at > aggregates.at) aggregates = await loadAggregates()
+      let reload =
+        (typeof marker?.at === "number" && marker.at > aggregates.at) || Date.now() - aggregates.at > 3000
+      if (!reload) {
+        try {
+          reload = (await stat(files.events)).mtimeMs > aggregates.at
+        } catch {
+          reload = false
+        }
+      }
+      if (reload) aggregates = await loadAggregates()
       await writeStatus(files.status, makeStatus())
+    }
+
+    async function currentStatus() {
+      if (Date.now() - aggregates.at > 3000) aggregates = await loadAggregates()
+      await currentOwner()
+      return makeStatus()
+    }
+
+    async function registerRpc() {
+      if (!ctx.rpc) return
+      try {
+        const registration = await ctx.rpc.register(GoPool, {
+          status: async () => currentStatus(),
+          refresh: async () => {
+            await refreshAll(true)
+            aggregates = await loadAggregates()
+            await writeCurrentStatus()
+            return currentStatus()
+          },
+        })
+        registrations.push(registration)
+      } catch (error) {
+        logger.warn("failed to register RPC", error)
+      }
     }
 
     async function refreshQuota(account: Account, force = false) {
@@ -651,6 +698,7 @@ export default {
         typeof input.reported === "number" && Number.isFinite(input.reported) ? Math.max(0, input.reported) : undefined
       const charged = input.raw?.charged ?? reported
       const listCost = input.raw?.listCost
+      const modelName = await modelNameFor(input.modelID)
       const estimate =
         listCost === undefined && (charged === undefined || charged === 0) ? await estimatedCostFor(input.modelID, tokens) : 0
       const cost = listCost ?? (charged !== undefined && charged > 0 ? charged : estimate)
@@ -666,6 +714,7 @@ export default {
         accountLabel: account?.label ?? "unattributed",
         providerID: input.providerID,
         model: input.modelID,
+        ...(modelName ? { modelName } : {}),
         source: input.source,
         cost,
         estimated: metering === "estimate" && estimate > 0,
@@ -768,10 +817,12 @@ export default {
     }
 
     try {
+      await loadPricing()
       await pruneUsage(files.events).catch(() => {})
       await reloadAccounts()
       if (accounts.length === 0) logger.warn("no OpenCode Go connections found yet")
       await registerHooks()
+      await registerRpc()
       await startDashboardIfEnabled()
       startEventLoop()
       await writeCurrentStatus().catch((error) => logger.error("failed to write initial status", error))

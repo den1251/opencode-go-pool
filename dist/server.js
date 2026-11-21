@@ -657,7 +657,7 @@ function render(status) {
 
   document.getElementById("models").innerHTML = status.month.models.length === 0
     ? '<tr><td colspan="6" class="empty">No usage recorded yet.</td></tr>'
-    : status.month.models.map((model) => '<tr><td class="mono">' + escapeHTML(model.model) + '</td><td class="num">' + model.requests + '</td><td class="num">' + compact(model.input) + '</td><td class="num">' + compact(model.output) + '</td><td class="num">' + money(model.cost) + '</td><td class="num">' + (model.allowance > 0 ? money(model.allowance) : '—') + '</td></tr>').join("");
+    : status.month.models.map((model) => '<tr><td class="mono">' + escapeHTML(model.modelName ?? model.model) + '</td><td class="num">' + model.requests + '</td><td class="num">' + compact(model.input) + '</td><td class="num">' + compact(model.output) + '</td><td class="num">' + money(model.cost) + '</td><td class="num">' + (model.allowance > 0 ? money(model.allowance) : '—') + '</td></tr>').join("");
 
   document.getElementById("switches").innerHTML = status.switches.length === 0
     ? '<tr><td colspan="4" class="empty">No switches yet.</td></tr>'
@@ -756,7 +756,8 @@ async function resolveMachine(directory) {
 }
 
 // src/ledger.ts
-import { mkdir as mkdir2, readdir as readdir2, readFile as readFile3, unlink as unlink3, writeFile as writeFile2 } from "node:fs/promises";
+import { link, mkdir as mkdir2, readdir as readdir2, readFile as readFile3, unlink as unlink3, writeFile as writeFile2 } from "node:fs/promises";
+import { randomUUID as randomUUID3 } from "node:crypto";
 import { join as join6 } from "node:path";
 var EMPTY_TOKENS = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
 function normalizeTokens(value) {
@@ -783,14 +784,18 @@ async function recordUsage(directory, entry) {
   await mkdir2(directory, { recursive: true, mode: 448 });
   const safe = entry.id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const file = join6(directory, `${entry.day}__${safe}.json`);
+  const temporary = join6(directory, `.${safe}.${randomUUID3()}.tmp`);
   try {
-    await writeFile2(file, JSON.stringify(entry) + `
+    await writeFile2(temporary, JSON.stringify(entry) + `
 `, { flag: "wx", mode: 384 });
+    await link(temporary, file);
     return true;
   } catch (error) {
     if (error.code === "EEXIST")
       return false;
     throw error;
+  } finally {
+    await unlink3(temporary).catch(() => {});
   }
 }
 async function aggregateUsage(directory, options = {}) {
@@ -869,10 +874,13 @@ function add(aggregate, entry) {
     model.listCost += listCost;
     model.allowance += allowance;
     addTokens(model, entry.tokens);
+    if (!model.modelName && entry.modelName)
+      model.modelName = entry.modelName;
   } else {
     aggregate.models.push({
       providerID: entry.providerID,
       model: entry.model,
+      ...entry.modelName ? { modelName: entry.modelName } : {},
       requests: 1,
       cost: entry.cost,
       listCost,
@@ -1245,6 +1253,25 @@ function stringValue(value) {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+// node_modules/@opencode/schema/dist/rpc.js
+function define(definition) {
+  const reserved = Object.values(definition.methods).flatMap((method) => Object.keys(method.errors ?? {})).find((name) => name.startsWith("rpc."));
+  if (reserved)
+    throw new Error(`RPC error names starting with "rpc." are reserved: ${reserved}`);
+  return definition;
+}
+// src/rpc.ts
+var empty = { type: "object", properties: {}, additionalProperties: false };
+var status = { type: "object", additionalProperties: true };
+var GoPool = define({
+  id: "opencode-go-pool",
+  methods: {
+    status: { input: empty, output: status },
+    refresh: { input: empty, output: status }
+  },
+  events: {}
+});
+
 // src/server.ts
 var SHARED_STATE_KEY = "__opencodeGoPoolSharedStateV1";
 function sharedState(directory) {
@@ -1290,6 +1317,7 @@ var server_default = {
     const pendingUsage = shared.pendingUsage;
     const processedEvents = shared.processedEvents;
     const pricing = new Map;
+    const modelNames = new Map;
     let pricingAt = 0;
     const inFlight = new Map;
     const registrations = [];
@@ -1330,11 +1358,18 @@ var server_default = {
           if (model.providerID !== PROVIDER_ID)
             continue;
           pricing.set(model.id, model.cost);
+          if (model.name)
+            modelNames.set(model.id, model.name);
         }
         pricingAt = Date.now();
       } catch (error) {
         logger.error("failed to load model pricing", error);
       }
+    }
+    async function modelNameFor(modelID) {
+      if (!modelNames.has(modelID))
+        await loadPricing();
+      return modelNames.get(modelID);
     }
     async function estimatedCostFor(modelID, tokens) {
       if (pricing.size === 0 || !pricing.has(modelID))
@@ -1383,9 +1418,41 @@ var server_default = {
     }
     async function writeCurrentStatus() {
       const marker = await readJson(files.clearRequest);
-      if (typeof marker?.at === "number" && marker.at > aggregates.at)
+      let reload = typeof marker?.at === "number" && marker.at > aggregates.at || Date.now() - aggregates.at > 3000;
+      if (!reload) {
+        try {
+          reload = (await stat2(files.events)).mtimeMs > aggregates.at;
+        } catch {
+          reload = false;
+        }
+      }
+      if (reload)
         aggregates = await loadAggregates();
       await writeStatus(files.status, makeStatus());
+    }
+    async function currentStatus() {
+      if (Date.now() - aggregates.at > 3000)
+        aggregates = await loadAggregates();
+      await currentOwner();
+      return makeStatus();
+    }
+    async function registerRpc() {
+      if (!ctx.rpc)
+        return;
+      try {
+        const registration = await ctx.rpc.register(GoPool, {
+          status: async () => currentStatus(),
+          refresh: async () => {
+            await refreshAll(true);
+            aggregates = await loadAggregates();
+            await writeCurrentStatus();
+            return currentStatus();
+          }
+        });
+        registrations.push(registration);
+      } catch (error) {
+        logger.warn("failed to register RPC", error);
+      }
     }
     async function refreshQuota(account, force = false) {
       const cached = quotas.accounts[account.id];
@@ -1766,6 +1833,7 @@ var server_default = {
       const reported = typeof input.reported === "number" && Number.isFinite(input.reported) ? Math.max(0, input.reported) : undefined;
       const charged = input.raw?.charged ?? reported;
       const listCost = input.raw?.listCost;
+      const modelName = await modelNameFor(input.modelID);
       const estimate = listCost === undefined && (charged === undefined || charged === 0) ? await estimatedCostFor(input.modelID, tokens) : 0;
       const cost = listCost ?? (charged !== undefined && charged > 0 ? charged : estimate);
       const metering = listCost !== undefined ? "response" : charged !== undefined && charged > 0 ? "event" : "estimate";
@@ -1779,6 +1847,7 @@ var server_default = {
         accountLabel: account?.label ?? "unattributed",
         providerID: input.providerID,
         model: input.modelID,
+        ...modelName ? { modelName } : {},
         source: input.source,
         cost,
         estimated: metering === "estimate" && estimate > 0,
@@ -1878,11 +1947,13 @@ var server_default = {
       }
     }
     try {
+      await loadPricing();
       await pruneUsage(files.events).catch(() => {});
       await reloadAccounts();
       if (accounts.length === 0)
         logger.warn("no OpenCode Go connections found yet");
       await registerHooks();
+      await registerRpc();
       await startDashboardIfEnabled();
       startEventLoop();
       await writeCurrentStatus().catch((error) => logger.error("failed to write initial status", error));

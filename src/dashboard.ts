@@ -281,7 +281,7 @@ function render(status) {
 
   document.getElementById("models").innerHTML = status.month.models.length === 0
     ? '<tr><td colspan="6" class="empty">No usage recorded yet.</td></tr>'
-    : status.month.models.map((model) => '<tr><td class="mono">' + escapeHTML(model.model) + '</td><td class="num">' + model.requests + '</td><td class="num">' + compact(model.input) + '</td><td class="num">' + compact(model.output) + '</td><td class="num">' + money(model.cost) + '</td><td class="num">' + (model.allowance > 0 ? money(model.allowance) : '—') + '</td></tr>').join("");
+    : status.month.models.map((model) => '<tr><td class="mono">' + escapeHTML(model.modelName ?? model.model) + '</td><td class="num">' + model.requests + '</td><td class="num">' + compact(model.input) + '</td><td class="num">' + compact(model.output) + '</td><td class="num">' + money(model.cost) + '</td><td class="num">' + (model.allowance > 0 ? money(model.allowance) : '—') + '</td></tr>').join("");
 
   document.getElementById("switches").innerHTML = status.switches.length === 0
     ? '<tr><td colspan="4" class="empty">No switches yet.</td></tr>'

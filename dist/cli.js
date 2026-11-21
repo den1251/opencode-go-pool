@@ -2,6 +2,7 @@
 
 // src/cli.ts
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { access, readFile as readFile4, unlink as unlink4, writeFile as writeFile3 } from "node:fs/promises";
 import { delimiter, join as join5 } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -167,7 +168,7 @@ async function withLock(directory, name, run, timeoutMs = 4000) {
 }
 
 // src/ledger.ts
-import { mkdir as mkdir2, readdir as readdir2, readFile as readFile3, unlink as unlink3, writeFile as writeFile2 } from "node:fs/promises";
+import { link, mkdir as mkdir2, readdir as readdir2, readFile as readFile3, unlink as unlink3, writeFile as writeFile2 } from "node:fs/promises";
 import { join as join4 } from "node:path";
 var EMPTY_TOKENS = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
 function dayKey(ts) {
@@ -252,10 +253,13 @@ function add(aggregate, entry) {
     model.listCost += listCost;
     model.allowance += allowance;
     addTokens(model, entry.tokens);
+    if (!model.modelName && entry.modelName)
+      model.modelName = entry.modelName;
   } else {
     aggregate.models.push({
       providerID: entry.providerID,
       model: entry.model,
+      ...entry.modelName ? { modelName: entry.modelName } : {},
       requests: 1,
       cost: entry.cost,
       listCost,
@@ -330,12 +334,25 @@ function formatStatusTable(status) {
   });
   lines.push("");
   const totals = `This machine: ${money(status.month.cost)} list · ${planText(status.month.allowance)} · ${tokensText(status.month.tokens)} · ${status.month.entries} request(s)`;
-  if (sameTotals(status.today, status.month)) {
+  const identical = sameTotals(status.today, status.month);
+  if (identical) {
     lines.push(totals);
   } else {
     lines.push(`Today: ${money(status.today.cost)} list · ${planText(status.today.allowance)} · ${tokensText(status.today.tokens)} · ${status.today.entries} request(s)`);
     lines.push(`This month: ${money(status.month.cost)} list · ${planText(status.month.allowance)} · ${tokensText(status.month.tokens)} · ${status.month.entries} request(s)`);
   }
+  const modelSections = identical ? [["Models this month", status.month.models]] : [
+    ["Models today", status.today.models],
+    ["Models this month", status.month.models]
+  ];
+  for (const [title, models] of modelSections) {
+    if (models.length === 0)
+      continue;
+    lines.push("");
+    lines.push(...formatModelTable(title, models));
+  }
+  if (modelSections.some(([, models]) => models.length > 0))
+    lines.push("");
   if (status.month.estimated > 0) {
     lines.push(`Cost includes catalog estimates for ${status.month.estimated} request(s) without an exact list cost.`);
   }
@@ -349,6 +366,26 @@ function formatStatusTable(status) {
     lines.push(`Last switch: ${last.from ?? "none"} → ${last.to} (${last.reason})`);
   return lines.join(`
 `);
+}
+function formatModelTable(title, models) {
+  const widths = [30, 10, 10, 10, 12, 12];
+  const rightAligned = [false, true, true, true, true, true];
+  const row = (cells) => cells.map((value, index) => {
+    const text = truncate(value, widths[index]);
+    return rightAligned[index] ? text.padStart(widths[index]) : text.padEnd(widths[index]);
+  }).join("  ").trimEnd();
+  const lines = [title, row(["Model", "Requests", "Input", "Output", "List $", "Plan $"])];
+  for (const model of models) {
+    lines.push(row([
+      model.modelName ?? model.model,
+      String(model.requests),
+      compact(model.input),
+      compact(model.output),
+      money(model.cost),
+      model.allowance > 0 ? money(model.allowance) : "—"
+    ]));
+  }
+  return lines;
 }
 function sameTotals(left, right) {
   return left.entries === right.entries && left.cost === right.cost && left.allowance === right.allowance && left.tokens.input === right.tokens.input && left.tokens.output === right.tokens.output && left.tokens.reasoning === right.tokens.reasoning && left.tokens.cacheRead === right.tokens.cacheRead && left.tokens.cacheWrite === right.tokens.cacheWrite;
@@ -411,7 +448,7 @@ async function main() {
     case "version":
     case "--version":
     case "-v":
-      return console.log("opencode-go-pool 0.1.0");
+      return console.log(`opencode-go-pool ${packageVersion()}`);
     default:
       console.error(`Unknown command: ${command}`);
       help();
@@ -425,11 +462,29 @@ async function status(args) {
 Data directory: ${directory}`);
     return;
   }
+  const fresh = await freshStatus(value);
   if (args.includes("--json")) {
-    console.log(JSON.stringify(value, null, 2));
+    console.log(JSON.stringify(fresh, null, 2));
     return;
   }
-  console.log(formatStatusTable(value));
+  console.log(formatStatusTable(fresh));
+}
+async function freshStatus(value) {
+  const now = Date.now();
+  const [today, month] = await Promise.all([
+    aggregateUsage(files.events, { day: dayKey(now) }),
+    aggregateUsage(files.events, { month: monthKey(now) })
+  ]);
+  const accounts = value.accounts.map((account) => {
+    const todayUsage = today.accounts[account.id] ?? emptyUsage();
+    const monthUsage = month.accounts[account.id] ?? emptyUsage();
+    return {
+      ...account,
+      today: { cost: todayUsage.cost, tokens: todayUsage.tokens, allowance: todayUsage.allowance },
+      month: { cost: monthUsage.cost, tokens: monthUsage.tokens, allowance: monthUsage.allowance }
+    };
+  });
+  return { ...value, generatedAt: now, accounts, today, month };
 }
 async function accounts() {
   const value = await readStatus();
@@ -476,9 +531,10 @@ async function use(selector) {
   console.log(`Active account: ${account.label} (${next.activeID})`);
 }
 async function markStatusActive(accountID) {
-  const status = await readStatus();
-  if (!status)
+  const value = await readStatus();
+  if (!value)
     return;
+  const status = await freshStatus(value);
   status.activeID = accountID;
   for (const item of status.accounts)
     item.active = item.id === accountID;
@@ -514,7 +570,7 @@ async function refresh() {
     return;
   }
   const value = await response.json();
-  console.log(formatStatusTable(value));
+  console.log(formatStatusTable(await freshStatus(value)));
 }
 async function openDashboard() {
   const info = await readJson(files.dashboard);
@@ -629,6 +685,14 @@ async function runOpencode(binary, args, quiet = false) {
 }
 function packageRoot() {
   return fileURLToPath(new URL("..", import.meta.url));
+}
+function packageVersion() {
+  try {
+    const value = JSON.parse(readFileSync(join5(packageRoot(), "package.json"), "utf8"));
+    return value.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 async function printURL() {
   const info = await readJson(files.dashboard);
@@ -812,6 +876,7 @@ function toCSV(entries) {
     "accountLabel",
     "providerID",
     "model",
+    "modelName",
     "source",
     "cost",
     "listCost",
@@ -836,6 +901,7 @@ function toCSV(entries) {
     entry.accountLabel,
     entry.providerID,
     entry.model,
+    entry.modelName ?? "",
     entry.source,
     entry.cost,
     entry.listCost ?? "",
