@@ -2,9 +2,7 @@
 
 Multi-account pool, quota monitor and local usage ledger for **OpenCode Go**, inside OpenCode CLI and OpenCode Desktop.
 
-| OpenCode CLI/TUI | OpenCode Desktop |
-| --- | --- |
-| ![Go pool usage in the OpenCode TUI](https://raw.githubusercontent.com/den1251/opencode-go-pool/main/docs/screenshots/tui-usage.png) | ![Go Pool panel in OpenCode Desktop](https://raw.githubusercontent.com/den1251/opencode-go-pool/main/docs/screenshots/desktop-usage-panel.png) |
+![Go pool usage in OpenCode CLI and Desktop](https://raw.githubusercontent.com/den1251/opencode-go-pool/main/docs/screenshots/overview.png)
 
 *Screenshots use example data.*
 
