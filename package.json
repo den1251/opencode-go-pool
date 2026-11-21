@@ -28,24 +28,17 @@
     "./gui-experimental": "./dist/gui-experimental.cjs"
   },
   "main": "./dist/server.js",
-  "bin": {
-    "opencode-go-pool": "dist/cli.js"
-  },
   "files": [
     "dist",
     "README.md",
     "LICENSE"
   ],
-  "engines": {
-    "node": ">=20"
-  },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "bun run build:server && bun run build:cli && bun run build:rpc && bun run build:tui && bun run build:gui && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "build": "bun run build:server && bun run build:rpc && bun run build:tui && bun run build:gui",
     "build:server": "bun build src/server.ts --outdir dist --target node --format esm",
-    "build:cli": "bun build src/cli.ts --outdir dist --target node --format esm",
     "build:rpc": "bun build src/rpc.ts --outdir dist --target node --format esm",
     "build:tui": "bun run scripts/build-tui.ts",
     "build:gui": "vite build",
